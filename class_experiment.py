@@ -151,7 +151,7 @@ class Experiment:
             self.seq = self.seq.replace('T', 'U')
             self.temp_C = int(self.__dict__['Temperature'])
             self.temp_K = 273.15 + self.temp_C
-            self.system = self.__dict__['system']
+            self.system_name = self.__dict__['system']
             self.rep_number = int(self.__dict__['Rep number'])
             self.short_description = self.__dict__['Short description']
             self.long_description = self.__dict__['Description']
@@ -164,7 +164,7 @@ class Experiment:
             self.reagent = 'Synthetic data' if 'reagent' not in kwargs else kwargs['reagent']
             self.conc_mM = None if 'conc_mM' not in kwargs else kwargs['conc_mM']
             self.ID = uuid.uuid4()
-            self.system = 'Synthetic' if 'system_name' not in kwargs else kwargs['system_name']
+            self.system_name = 'Synthetic' if 'system_name' not in kwargs else kwargs['system_name']
             self.rep_number = None if 'rep_number' not in kwargs else kwargs['rep_number']
             self.short_description = None
             self.long_description = None
@@ -286,9 +286,10 @@ class Experiment:
     def load_data(self):
         # silence runtime warning
         with warnings.catch_warnings():
-            # ignore divide by zero warnings: coverage can be zero in some cases
-            warnings.simplefilter("ignore", category=RuntimeWarning)
+            warnings.simplefilter("ignore", RuntimeWarning)
             raw_df = load_rc(self.path_to_rc, self.__dict__['Short description'])
+            # reactivate warnings
+            warnings.simplefilter("default", RuntimeWarning)
         # substitute T with Us
         raw_df['ref_nt'] = raw_df['ref_nt'].replace('T', 'U')
         # remove rows with nans

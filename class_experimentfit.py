@@ -113,6 +113,21 @@ class ExperimentFit(Experiment):
             super().__init__(seq=exp.seq)
             if hasattr(exp, 'df'):
                 self.df = exp.df
+            if exp.reagent == 'DMS combined in vitro':
+                self.temp_C = exp.temp_C
+                self.temp_K = exp.temp_K
+                self.reagent = exp.reagent
+                self.system_name = exp.system_name
+
+        # assert all attributes are the same
+        for attr in exp.__dict__.keys():
+            # do not consider ID
+            if attr in ['ID', 'df', 'raw_df']:
+                continue
+            if hasattr(self, attr):
+                assert getattr(self, attr) == getattr(exp, attr), f"Attribute {attr} does not match: {getattr(self, attr)} != {getattr(exp, attr)}"
+            else:
+                setattr(self, attr, getattr(exp, attr))
         self.debug = debug
         self.do_plots = do_plots
         self.infer_1D_sc = infer_1D_sc
@@ -468,7 +483,7 @@ def group_by_system(experiments):
     returns a dictionary with the experiments grouped by system in a dictionary'''
     systems = defaultdict(list) # defaltdict is a dictionary that creates a new list if the key is not found
     for exp in experiments:
-        systems[exp.system].append(exp)
+        systems[exp.system_name].append(exp)
     return dict(systems)    # {sys_i: [exp1, exp2, ...]}
 
 def generate_lambdas_indices(systems, DMS_mode, infer_1D_sc):
@@ -496,7 +511,7 @@ class System:
             ref_exp = self.exps_val[0]
         else:
             raise ValueError("No training or validation experiments provided.")
-        self.sys_name = ref_exp.system
+        self.sys_name = ref_exp.system_name
         self.reagent = ref_exp.reagent
         self.N_seq = ref_exp.N_seq
         self.seq = ref_exp.seq
@@ -522,11 +537,17 @@ class System:
         self.reps = set([exp.rep_number for exp in self.exps_all])
         # assert that all experiments have the same system attributes
         for exp in self.exps_all:
-            assert exp.system == self.sys_name
+            assert exp.system_name == self.sys_name
             assert exp.reagent == self.reagent
             assert exp.temp_C == self.temp_C
             assert exp.seq == self.seq, f'seq of {exp} is different from the first experiment in the system'
             assert exp.N_seq == self.N_seq
+        for exp_fit in self.exp_fits_all:
+            assert exp_fit.system_name == self.sys_name
+            assert exp_fit.reagent == self.reagent
+            assert exp_fit.temp_C == self.temp_C
+            assert exp_fit.seq == self.seq, f'seq of {exp_fit} is different from the first experiment in the system'
+            assert exp_fit.N_seq == self.N_seq
     
     def __str__(self):
         parts = [f"System: {self.sys_name}"]
@@ -937,7 +958,16 @@ class MultiSystemsFit:
             initial_guess = np.loadtxt(guess)
         
         # Ensure the loaded initial guess matches the expected parameter count
-        assert len(initial_guess) == self.N_params_tot, f"Expected {self.N_params_tot} parameters, got {len(initial_guess)}"
+        try:
+            assert len(initial_guess) == self.N_params_tot, f"Expected {self.N_params_tot} parameters, got {len(initial_guess)}"
+        except AssertionError as e:
+            self.logger.warning(e)
+            self.logger.warning(f'Padding with zeros to match expected parameter count')
+            # Pad with zeros if the loaded guess is shorter than expected
+            if len(initial_guess) < self.N_params_tot:
+                initial_guess = np.concatenate((initial_guess, np.zeros(self.N_params_tot - len(initial_guess))))
+            elif len(initial_guess) > self.N_params_tot:
+                raise ValueError(f"Loaded guess has more parameters than expected: {len(initial_guess)} vs {self.N_params_tot}")
         return initial_guess, bounds
 
     def _create_interim_result_string(self, final_params, reason_message):
@@ -1266,7 +1296,7 @@ class MultiSystemsFit:
     def callback(self, params, last_callback=False):
         if not last_callback: # Only count actual optimization steps
             self.iteration_count += 1
-        if datetime.datetime.now() - self.fit_start_time > datetime.timedelta(hours=24) and not last_callback:
+        if datetime.datetime.now() - self.fit_start_time > datetime.timedelta(hours=48) and not last_callback:
             # 24 hours elapsed; save results and stop optimization
             self.logger.info("24 hours elapsed; saving results before stopping optimization.")
             self.save_results()
@@ -1304,7 +1334,9 @@ class MultiSystemsFit:
                     else:
                         plt.close()
                     # plot lambdas
-                    system.plot_lambdas(system_param['lambda_sc'], save_fig_path=os.path.join(self.output_dir, f'{system.sys_name}_lambda_sc.png'))
+                    # if there are training experiments in the system
+                    if system.exp_fits_train:
+                        system.plot_lambdas(system_param['lambda_sc'], save_fig_path=os.path.join(self.output_dir, f'{system.sys_name}_lambda_sc.png'))
                     # plot pairing probs
                     if last_callback or self.infer_1D_sc:
                         system.plot_pairing_probs(**system_param, save_fig_path=os.path.join(self.output_dir, f'{system.sys_name}_pairing_probs.png'))
@@ -1339,8 +1371,8 @@ if __name__ == '__main__':
     #redmond
     experiments_Redmond = [Experiment(path) for path in Experiment.paths_to_redmond_ivt_data_txt]
     experiments_Redmond = [exp for exp in experiments_Redmond if exp.conc_mM != 85]
-    experiments_Redmond_train = [exp for exp in experiments_Redmond if exp.system not in ['hc16', 'bact_RNaseP_typeA']]
-    experiments_Redmond_val = [exp for exp in experiments_Redmond if exp.system in ['hc16', 'bact_RNaseP_typeA']]
+    experiments_Redmond_train = [exp for exp in experiments_Redmond if exp.system_name not in ['hc16', 'bact_RNaseP_typeA']]
+    experiments_Redmond_val = [exp for exp in experiments_Redmond if exp.system_name in ['hc16', 'bact_RNaseP_typeA']]
 
     args_multi_sys ={
         'experiments': experiment_cspA_37C_train,
