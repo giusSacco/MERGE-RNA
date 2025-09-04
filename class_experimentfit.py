@@ -113,11 +113,11 @@ class ExperimentFit(Experiment):
             super().__init__(seq=exp.seq)
             if hasattr(exp, 'df'):
                 self.df = exp.df
-            if exp.reagent == 'DMS combined in vitro':
-                self.temp_C = exp.temp_C
-                self.temp_K = exp.temp_K
-                self.reagent = exp.reagent
-                self.system_name = exp.system_name
+            #if exp.reagent == 'DMS combined in vitro':
+            self.temp_C = exp.temp_C
+            self.temp_K = exp.temp_K
+            self.reagent = exp.reagent
+            self.system_name = exp.system_name
 
         # assert all attributes are the same
         for attr in exp.__dict__.keys():
@@ -150,7 +150,10 @@ class ExperimentFit(Experiment):
         else:
             # Default behavior: mask first and last 25 nucleotides
             self.position_mask = np.ones(self.N_seq, dtype=bool)
-            mask_start, mask_end = 25, 25
+            if not self.is_synthetic:
+                mask_start, mask_end = 25, 25
+            else:
+                mask_start, mask_end = 0, 0
             if mask_start > 0:
                 self.position_mask[:mask_start] = False
             if mask_end > 0:
@@ -230,14 +233,15 @@ class ExperimentFit(Experiment):
         return pairing_probs
 
     # 1c: compute p(c_b)
-    def compute_p_cb_and_ps_from_scratch(self, mu, p_b, p_bind, lambda_sc_array):
+    def compute_p_cb_and_ps_from_scratch(self, mu, p_b, p_bind, lambda_sc_array, pairing_probs=None):
         '''Compute p(c_b) for the whole sequence'''
         # compute mu dependent quantities (and p(c_b|s_b,n_b))
         _, _, p_cb_given_sb_nb = self.compute_mu_dependent_quantities(mu, p_b, p_bind)
         # apply penalty for paired bases
         penalty = self.compute_penalty_m(mu, p_b)
         # compute p(s_b)
-        pairing_probs = self.compute_ps_from_scratch(penalty, lambda_sc_array)
+        if pairing_probs is None:
+            pairing_probs = self.compute_ps_from_scratch(penalty, lambda_sc_array)
         try:
             assert 0 <= penalty <= 5
         except AssertionError:

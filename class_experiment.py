@@ -155,6 +155,7 @@ class Experiment:
             self.rep_number = int(self.__dict__['Rep number'])
             self.short_description = self.__dict__['Short description']
             self.long_description = self.__dict__['Description']
+            self.is_synthetic = False
         elif seq:
             print('No data file provided, using sequence and creating synthetic data')
             self.seq = seq
@@ -168,6 +169,7 @@ class Experiment:
             self.rep_number = None if 'rep_number' not in kwargs else kwargs['rep_number']
             self.short_description = None
             self.long_description = None
+            self.is_synthetic = True
             #self.df = self.generate_synthetic_data(**kwargs)
             self.raw_df = None
         else:
@@ -402,7 +404,7 @@ class Experiment:
         print(f"Experiment info file created at {output_txt_path}")
 
 # %%
-def create_combined_cspA_df(pop_10):
+def create_combined_cspA_df(pop_10, normalise_mut_rate, use_synthetic_data=False, noise=False):
     # SRR6123773 and SRR6123774: the ones they use in DRACO
     cspA_10C_path = [path for path in Experiment.paths_to_cspA_10C_data_txt if '6123774' in path]
     cspA_10C_path = cspA_10C_path[0]
@@ -411,6 +413,24 @@ def create_combined_cspA_df(pop_10):
     exp_10 = Experiment(cspA_10C_path)
     exp_37 = Experiment(cspA_37C_path)
     pop_37 = 1 - pop_10
+    if use_synthetic_data:
+        # create synthetic data for 10C and 37C experiments
+        RNA_STRUCT_HOME = os.environ.get("RNA_STRUCT_HOME")
+        path_to_params_10C = os.path.join(RNA_STRUCT_HOME,"fits/cspA_comb_norm/fix_1/cspA_comb_100_with_lambdas/params1D.txt")
+        params_1D = np.loadtxt(path_to_params_10C)
+        # import multysystems fit
+        from class_experimentfit import MultiSystemsFit
+        multisysfit = MultiSystemsFit([exp_10,], infer_1D_sc=True)
+        # pack params
+        params_dict = multisysfit.pack_params(params_1D, multisysfit.systems[0])
+        exp_10.df = exp_10.generate_synthetic_data(params_dict=params_dict, noise=noise)
+
+        # same for exp_37
+        path_to_params_37C = os.path.join(RNA_STRUCT_HOME,"fits/cspA_comb_norm/fix_1/cspA_comb_0_with_lambdas/params1D.txt")
+        params_1D = np.loadtxt(path_to_params_37C)
+        multisysfit = MultiSystemsFit([exp_37,], infer_1D_sc=True)
+        params_dict = multisysfit.pack_params(params_1D, multisysfit.systems[0])
+        exp_37.df = exp_37.generate_synthetic_data(params_dict=params_dict, noise=noise)
     new_df = pd.DataFrame()
     # total coverage as average of both
     new_df['total_count'] = (exp_10.df['total_count'] + exp_37.df['total_count']) // 2
@@ -425,22 +445,129 @@ def create_combined_cspA_df(pop_10):
     new_df['Sample'] = f"{pop_10 * 100:.0f}% 10C cspA + {pop_37 * 100:.0f}% 37C"
     # following assertion will fail beacause of rounding, otherwise it is correct
     #assert np.allclose(new_df['mut_rate'], pop_10 * exp_10.df['mut_rate'] + pop_37 * exp_37.df['mut_rate'])
+
+    if normalise_mut_rate:
+        # force average to be equal to the 37C experiment, i.e. 0.012180
+        corrective_factor = 0.012180 / new_df['mut_rate'].mean()
+        # correct also mut_count
+        new_df['mut_count'] = np.round(new_df['mut_count'] * corrective_factor)
+        new_df['mut_rate'] = new_df['mut_count'] / new_df['total_count']
+
     return new_df
 #%%
 # %%
-def initialise_combined_cspA_exp(pop_10, same_system=False):
+def initialise_combined_cspA_exp(pop_10, same_system=False, is_exp_protein=False, normalise_mut_rate=False, use_synthetic_data=False, noise=False):
     """
     Initialise the instance of Experiment with the combined cspA data
     """
-    # create combined cspA df
-    new_df = create_combined_cspA_df(pop_10)
-    # create the experiment
-    kwargs = {
-        'seq':''.join(new_df['ref_nt'].values), 
-        'temp_C': (10+37)/2,
-        'reagent': 'DMS combined in vitro',
-        'system_name': f'cspA_combined_{pop_10 * 100:.0f}%' if not same_system else 'cspA_combined',
-    }
-    exp = Experiment(**kwargs)
-    exp.df = new_df
+    if not is_exp_protein:
+        # create combined cspA df
+        new_df = create_combined_cspA_df(pop_10, normalise_mut_rate=normalise_mut_rate, use_synthetic_data=use_synthetic_data, noise=noise)
+        # create the experiment
+        kwargs = {
+            'seq':''.join(new_df['ref_nt'].values), 
+            'temp_C': (10+37)/2,
+            'reagent': 'DMS combined in vitro',
+            'system_name': f'cspA_combined_{pop_10 * 100:.0f}%' if not same_system else 'cspA_combined',
+        }
+        exp = Experiment(**kwargs)
+        exp.df = new_df
+    else:
+        # we still need to create a new experiment for consistency with temperature
+        cspA_10C_with_protein_path = [path for path in Experiment.paths_to_cspA_10C_with_protein_data_txt if '6507969' in path]
+        cspA_10C_with_protein_path = cspA_10C_with_protein_path[0]
+        dummy_exp = Experiment(cspA_10C_with_protein_path)
+
+        if not use_synthetic_data:
+            new_df = dummy_exp.df.copy()
+        else:
+            # create synthetic data for experiment with protein
+            RNA_STRUCT_HOME = os.environ.get("RNA_STRUCT_HOME")
+            path_to_params_withprotein = os.path.join(RNA_STRUCT_HOME,"fits/cspA_comb_norm/fix_1/cspA_with_protein_with_lambdas/params1D.txt")
+            params_1D = np.loadtxt(path_to_params_withprotein)
+            # import multysystems fit
+            from class_experimentfit import MultiSystemsFit
+            multisysfit = MultiSystemsFit([dummy_exp,], infer_1D_sc=True)
+            # pack params
+            params_dict = multisysfit.pack_params(params_1D, multisysfit.systems[0])
+            new_df = dummy_exp.generate_synthetic_data(params_dict=params_dict, noise=noise)
+            if noise:
+                # add noise to the mutation rates
+                raise NotImplementedError('Noise is not implemented for the combined cspA with protein experiment')
+
+        if normalise_mut_rate:
+            # force average to be equal to the 37C experiment, i.e. 0.012180
+            corrective_factor = 0.012180 / new_df['mut_rate'].mean()
+            new_df['mut_count'] = np.round(new_df['mut_count'] * corrective_factor)
+            new_df['mut_rate'] = new_df['mut_count'] / new_df['total_count']
+        kwargs = {
+            'seq':''.join(new_df['ref_nt'].values), 
+            'temp_C': (10+37)/2,
+            'reagent': 'DMS combined in vitro',
+            'system_name': dummy_exp.system_name,
+        }
+        exp = Experiment(**kwargs)
+        exp.df = new_df
+    return exp
+
+def create_exp_synthetic_comb(pop1, params_dict = None, noise=False, coverage=10000, eps_b=None):
+    """
+    Create a synthetic experiment for the bistable sequence that I designed for Redmond
+
+    pop1: float, relative population for the first helix
+    noise: bool, whether to add noise to the synthetic data
+    """
+
+    if params_dict is None:
+        from class_experimentfit import MultiSystemsFit
+        params_1D = np.loadtxt("fits/red_crossval_1/red_crossval_bact_RNaseP_typeA_tetrahymena_ribozyme_V_chol_gly_riboswitch/params1D.txt")
+        exp = [Experiment(path_) for path_ in Experiment.paths_to_redmond_ivt_data_txt if Experiment(path_).conc_mM == 0]
+        exp = exp[0]
+        multi_exp = MultiSystemsFit([exp], validation_exps=None, infer_1D_sc=False)
+        params_dict = multi_exp.pack_params(params_1D, multi_exp.systems[0])
+        del params_1D
+        del exp
+        del multi_exp
+
+    # seq from redmond's mail
+    SEQ = "TAATACGACTCACTATAgggCATTATGCCACAGCCAATCCCCACTTCAACTCACAACTATTCCAAAAAATTGGAATAGTTGTGAGTTGAAGTGGGGATTAAAAAATCCCCACTTCAACTCACAACTATTCCAACCTCCAGCAGACCAT"
+    SEQ = SEQ.upper().replace('T', 'U')
+
+    # find the two occurrences of where we should put the constrains
+    compl_seq = "CCCCACUUCAACUCACAACUAUUCC"
+    start1 = SEQ.find(compl_seq)
+    if start1 == -1:
+        raise ValueError(f"Could not find helix 1 in sequence")
+    end1 = start1 + len(compl_seq) -1
+    indices1 = list(range(start1, end1+1))
+    assert SEQ[indices1[0]:indices1[-1]+1] == compl_seq, f"Expected {compl_seq} but got {SEQ[indices1[0]:indices1[-1]+1]}"
+    # find second occurrence of to_which_it_pairs
+    start2 = SEQ.find(compl_seq, start1 + 1)
+    if start2 == -1:
+        raise ValueError(f"Could not find helix 2 in sequence")
+    end2 = start2 + len(compl_seq) -1
+    indices2 = list(range(start2, end2+1))
+    assert SEQ[indices2[0]:indices2[-1]+1] == compl_seq, f"Expected {compl_seq} but got {SEQ[indices2[0]:indices2[-1]+1]}"
+    
+    # Create the synthetic experiment
+    kwargs = {}
+    kwargs['conc_mM'] = 50
+    exp = Experiment(seq=SEQ, temp_C=37, reagent='DMS synthetic', system_name=f'bistable_synthetic_{pop1*100:.0f}')
+    cov1 = int(coverage * pop1)
+    cov2 = int(coverage * (1 - pop1))
+    for indices, cov in [(indices1, cov1), (indices2, cov2)]:
+        params_dict_ = params_dict.copy()
+        if params_dict_['lambda_sc'] is None:
+            params_dict_['lambda_sc'] = np.zeros(len(SEQ))
+        params_dict_['lambda_sc'][indices] += -2
+        exp.df = exp.generate_synthetic_data(params_dict = params_dict_, coverage = cov, noise=noise, eps_b=eps_b)
+        if indices == indices1:
+            df = exp.df.copy()
+        elif indices == indices2:
+            df['mut_count'] += exp.df['mut_count']
+            df['wt_count'] += exp.df['wt_count']
+            df['total_count'] += exp.df['total_count']
+            df['mut_rate'] = df['mut_count'] / df['total_count']
+    exp.df = df
+    exp.raw_df = df.copy()
     return exp
