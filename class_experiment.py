@@ -510,7 +510,7 @@ def initialise_combined_cspA_exp(pop_10, same_system=False, is_exp_protein=False
         exp.df = new_df
     return exp
 
-def create_exp_synthetic_comb(pop1, params_dict = None, noise=False, coverage=10000, eps_b=None):
+def create_exp_synthetic_comb(pop1, params_dict = None, same_system = False, noise=False, coverage=10000, eps_b=None):
     """
     Create a synthetic experiment for the bistable sequence that I designed for Redmond
 
@@ -552,7 +552,8 @@ def create_exp_synthetic_comb(pop1, params_dict = None, noise=False, coverage=10
     # Create the synthetic experiment
     kwargs = {}
     kwargs['conc_mM'] = 50
-    exp = Experiment(seq=SEQ, temp_C=37, reagent='DMS synthetic', system_name=f'bistable_synthetic_{pop1*100:.0f}')
+    system_name = f'bistable_synthetic_{pop1*100:.0f}' if not same_system else 'bistable_synthetic'
+    exp = Experiment(seq=SEQ, temp_C=37, reagent='DMS synthetic', system_name=system_name, **kwargs)
     cov1 = int(coverage * pop1)
     cov2 = int(coverage * (1 - pop1))
     for indices, cov in [(indices1, cov1), (indices2, cov2)]:

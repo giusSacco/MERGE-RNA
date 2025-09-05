@@ -118,6 +118,7 @@ class ExperimentFit(Experiment):
             self.temp_K = exp.temp_K
             self.reagent = exp.reagent
             self.system_name = exp.system_name
+            self.conc_mM = exp.conc_mM
 
         # assert all attributes are the same
         for attr in exp.__dict__.keys():
@@ -1014,7 +1015,8 @@ class MultiSystemsFit:
             raise ValueError(f'Expected {self.N_params_tot} bounds, got {len(bounds)}')
         
         # Set stricter convergence criteria: reduce ftol to 1e-8 (default is 2.220446049250313e-09)
-        options = {'ftol': 0, 'gtol': 0}
+        #options = {'ftol': 0, 'gtol': 0}
+        options=dict(ftol=np.nan, gtol=np.sqrt(np.finfo(float).tiny))
         if self.max_iter is not None:
             options['maxiter'] = self.max_iter
 
@@ -1026,12 +1028,12 @@ class MultiSystemsFit:
         if self.debug:  # minimization outside of try block when debugging
             self.fit_result = minimize(self.multisys_loss_and_grad, initial_guess, 
                                        method='L-BFGS-B', bounds=bounds, jac=True, 
-                                       options=options, callback=self.callback, tol=0)
+                                       options=options, callback=self.callback)
         else:
             try:
                 self.fit_result = minimize(self.multisys_loss_and_grad, initial_guess, 
                                            method='L-BFGS-B', bounds=bounds, jac=True, 
-                                           options=options, callback=self.callback, tol=0)
+                                           options=options, callback=self.callback)
                 with open(self.log_file_path, 'a') as f:
                     self.logger.info(f'Fit result:\n {self.fit_result}')
             except KeyboardInterrupt as e:
