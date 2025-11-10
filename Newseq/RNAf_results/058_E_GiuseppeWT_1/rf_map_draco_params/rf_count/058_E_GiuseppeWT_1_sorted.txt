@@ -1,0 +1,12 @@
+### Chemical probing experiment
+ID:	cdd80cdc-fd54-407e-97df-03b2ca9c47ae
+Description:	NewseqWT conc 0mM rep 1
+Short description:	WT 0mM r1
+Path to rc data:	/Users/giuseppesacco/uni/unified-rna-struct/Newseq/RNAf_results/058_E_GiuseppeWT_1/rf_map_draco_params/rf_count/058_E_GiuseppeWT_1_sorted.rc
+Reagent:	DMS
+Concentration:	0
+SRR:	058_E_GiuseppeWT_1
+Path to full reference fasta:	/Users/giuseppesacco/uni/unified-rna-struct/Newseq/reference.fa
+Temperature:	37
+system:	NewseqWT
+Rep number:	1
