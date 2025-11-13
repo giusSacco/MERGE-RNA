@@ -1,8 +1,8 @@
 ### Chemical probing experiment
-ID:	24ee8da1-206d-4560-b190-511a25ff7c48
+ID:	d3bd7369-04e8-4a36-a5ad-79ab186c25a3
 Description:	NewseqWT conc 100mM rep 2
 Short description:	WT 100mM r2
-Path to rc data:	/Users/giuseppesacco/uni/unified-rna-struct/Newseq/RNAf_results/058_D_100mM_GiuseppeWT_2/rf_map_draco_params/rf_count/058_D_100mM_GiuseppeWT_2_sorted.rc
+Path to rc data:	$RNA_STRUCT_HOME/Newseq/RNAf_results/058_D_100mM_GiuseppeWT_2/rf_map_draco_params/rf_count/058_D_100mM_GiuseppeWT_2_sorted.rc
 Reagent:	DMS
 Concentration:	100
 SRR:	058_D_100mM_GiuseppeWT_2
