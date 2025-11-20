@@ -105,7 +105,7 @@ def convert_p_bind_dict_to_1d(p_bind_dict, DMS_mode):
         ])
 class ExperimentFit(Experiment):
     '''Takes in input an instance of Experiment (data at a given concentration) and computes the mutation profile and the loss, and their derivatives with respect to the parameters.'''
-    def __init__(self, exp, *, infer_1D_sc, eps_b, is_training, debug=False, do_plots=False, logger = logging.getLogger('main'), custom_mask=None):
+    def __init__(self, exp, *, infer_1D_sc, eps_b, is_training, debug=False, do_plots=False, logger = logging.getLogger('main'), custom_mask=None, use_interpolated_ps=False):
         # Initialize the Experiment attributes. These include reagent, concentration, sequence, df, etc.
         if hasattr(exp, 'path_to_info_txt'):    # this means we have all the information of the experiment in that file
             super().__init__(exp.path_to_info_txt)
@@ -139,6 +139,9 @@ class ExperimentFit(Experiment):
         self.is_training = is_training
         self.loss_history = []
         self.logger = logger
+        self.use_interpolated_ps = use_interpolated_ps and infer_1D_sc
+        self._cached_pairing_probs = None
+        self._cached_gradients = None
         
         # Initialize position mask
         if custom_mask is not None:
@@ -220,29 +223,137 @@ class ExperimentFit(Experiment):
         pairing = np.sum(bpp+bpp.T,axis=0)    # pairing probability for each base
         return pairing
 
-    def compute_ps_from_scratch(self, penalty, lambda_sc):
-        '''Compute the pairing probabilities from scratch, i.e. for new fold compound after applying soft constraints
-            for paired bases and soft constraints from lambda_sc'''
+    def dps_dlambda_sc(self, penalty, p_sb, lambda_sc):
+        # compute dps_dlambda_j
+        p_i_paired_given_j_unpaired = np.zeros((self.N_seq, self.N_seq))
+        for j in range(self.N_seq):
+            # basically what we do in compute_ps_from_scratch but we add an hard constraint on j
+            fc = RNA.fold_compound(self.seq)
+            RNA.cvar.temperature = self.temp_C
+            fc.hc_add_up(j+1) # forbid pairing at position j
+            self.apply_penalty_for_paired_bases(penalty, fc)
+            self.apply_soft_constraints(lambda_sc, fc)
+            p_i_paired_given_j_unpaired[:, j] = self.compute_pairing_probabilities(fc)
+        # tested with explicit loop, vectorization should be ok
+        first_term = (1-p_sb[np.newaxis,:]) * (p_sb[:,np.newaxis] - p_i_paired_given_j_unpaired)
+        second_term = (1-p_sb[:,np.newaxis]) * (p_sb[np.newaxis,:] - p_i_paired_given_j_unpaired.T)
+        if self.debug:
+            assert np.max(np.abs(first_term - second_term)) < 1e-6
+        dps_i_dlambda_j = -(first_term + second_term)/(2*self.kBT)
+        dps_i_dlambda_j/= 2  # empirical factor of 2 to match finite differences
+        return dps_i_dlambda_j
+    
+    def compute_and_store_ps_and_derivatives(self, penalty, lambda_sc, interpolate, compute_derivatives_anyway=False):
+        lambda_sc_array = None if lambda_sc is None else np.asarray(lambda_sc, dtype=float)
+        lambda_cache = None
         fold_compound = RNA.fold_compound(self.seq)
         RNA.cvar.temperature = self.temp_C
         # apply penalty for paired bases
         self.apply_penalty_for_paired_bases(penalty, fold_compound)
         # apply soft constraints from lambda_sc
-        self.apply_soft_constraints(lambda_sc, fold_compound)
+        if self.use_interpolated_ps and lambda_sc_array is not None:
+            lambda_rounded = np.round(lambda_sc_array, 2)
+            self.apply_soft_constraints(lambda_rounded, fold_compound)
+        else: # it's probably the same lol
+            self.apply_soft_constraints(lambda_sc_array, fold_compound)
         # compute pairing probabilities
         pairing_probs = self.compute_pairing_probabilities(fold_compound)
-        return pairing_probs
+        # interpolate
+        if interpolate and lambda_sc_array is not None:
+            # compute derivatives wrt lambda_sc
+            dps_dlambda_sc = self.dps_dlambda_sc(penalty, pairing_probs, lambda_sc_array)
+            epsilon=1e-10 # this is to avoid numerical issues when pairing is 0 or 1
+            x=np.log(pairing_probs+epsilon)-np.log(1-pairing_probs+epsilon)
+            dx=(1/(pairing_probs+epsilon)+1/(1-pairing_probs+epsilon))
+            x+=dx*np.matmul(dps_dlambda_sc, lambda_sc_array-lambda_rounded)
+            pairing_probs_interpolated=-epsilon+(1+2*epsilon)/(1+np.exp(-x))
+            try:
+                assert np.allclose(pairing_probs, pairing_probs_interpolated, atol=1e-2)
+            except AssertionError:
+                self.logger.warning("Warning: interpolated pairing probabilities differ significantly from computed ones.")
+                self.logger.warning(f"Max difference: {np.max(np.abs(pairing_probs - pairing_probs_interpolated))}")
+            # cap values to [0,1]
+            pairing_probs_interpolated = np.clip(pairing_probs_interpolated, 0.0, 1.0)
+            lambda_cache = lambda_sc_array.copy()
+            self._cached_gradients = {'penalty': penalty, 'lambda_sc': lambda_cache, 'dps_dlambda_sc': dps_dlambda_sc, 'interpolated': interpolate}
+            pairing_probs = pairing_probs_interpolated
+        else:
+            if compute_derivatives_anyway and lambda_sc_array is not None:
+                dps_dlambda_sc = self.dps_dlambda_sc(penalty, pairing_probs, lambda_sc_array)
+                lambda_cache = lambda_sc_array.copy()
+                self._cached_gradients = {'penalty': penalty, 'lambda_sc': lambda_cache, 'dps_dlambda_sc': dps_dlambda_sc, 'interpolated': interpolate}
+            else:
+                lambda_cache = None if lambda_sc_array is None else lambda_sc_array.copy()
+        if lambda_sc_array is None:
+            lambda_cache = None
+        self._cached_pairing_probs = {'penalty': penalty, 'lambda_sc': None if lambda_cache is None else lambda_cache.copy(), 'pairing_probs': pairing_probs, 'interpolated': interpolate}
+
+    def compare_keys_of_cached_ps(self, penalty, lambda_sc, interpolated):
+        '''Compare the keys of the cached pairing probabilities with the current ones.'''
+        if self._cached_pairing_probs is None:
+            return False
+        if not np.isclose(self._cached_pairing_probs['penalty'], penalty):
+            return False
+        if not (self._cached_pairing_probs['interpolated'] == interpolated):
+            return False
+        cached_lambda = self._cached_pairing_probs['lambda_sc']
+        if lambda_sc is None:
+            if cached_lambda is not None:
+                return False
+        else:
+            if cached_lambda is None or not np.allclose(cached_lambda, lambda_sc):
+                return False
+        return True
+    
+    def compare_keys_of_cached_gradients(self, penalty, lambda_sc, interpolated):
+        '''Compare the keys of the cached gradients with the current ones.'''
+        if self._cached_gradients is None:
+            return False
+        if not np.isclose(self._cached_gradients['penalty'], penalty):
+            return False
+        cached_lambda = self._cached_gradients['lambda_sc']
+        if lambda_sc is None:
+            if cached_lambda is not None:
+                return False
+        else:
+            if cached_lambda is None or not np.allclose(cached_lambda, lambda_sc):
+                return False
+        if not (self._cached_gradients['interpolated'] == interpolated):
+            return False
+        return True
+
+    def get_ps(self, penalty, lambda_sc, interpolated=False):
+        '''Compute the pairing probabilities from scratch, i.e. for new fold compound after applying soft constraints
+            for paired bases and soft constraints from lambda_sc'''
+        # check if we can use cached pairing probabilities
+        key_is_same = self.compare_keys_of_cached_ps(penalty, lambda_sc, interpolated)
+        if self._cached_pairing_probs is None or not key_is_same:
+            self.logger.debug("Computing pairing probabilities from scratch.")
+            self.compute_and_store_ps_and_derivatives(penalty, lambda_sc, interpolated)
+            return self._cached_pairing_probs['pairing_probs']
+        else:
+            return self._cached_pairing_probs['pairing_probs']
+
+    def get_dps_dlambda_sc(self, penalty, lambda_sc, interpolated):
+        if not self.infer_1D_sc:
+            return None 
+        # check for cached values
+        key_is_same = self.compare_keys_of_cached_gradients(penalty, lambda_sc, interpolated)
+        if self._cached_gradients is not None and key_is_same:
+            return self._cached_gradients['dps_dlambda_sc']
+        else:
+            self.compute_and_store_ps_and_derivatives(penalty, lambda_sc, interpolated, compute_derivatives_anyway=True)
+            return self._cached_gradients['dps_dlambda_sc']
+            
 
     # 1c: compute p(c_b)
-    def compute_p_cb_and_ps_from_scratch(self, mu, p_b, p_bind, lambda_sc_array, pairing_probs=None):
+    def compute_p_cb(self, mu, p_b, p_bind, pairing_probs):
         '''Compute p(c_b) for the whole sequence'''
         # compute mu dependent quantities (and p(c_b|s_b,n_b))
         _, _, p_cb_given_sb_nb = self.compute_mu_dependent_quantities(mu, p_b, p_bind)
         # apply penalty for paired bases
         penalty = self.compute_penalty_m(mu, p_b)
         # compute p(s_b)
-        if pairing_probs is None:
-            pairing_probs = self.compute_ps_from_scratch(penalty, lambda_sc_array)
         try:
             assert 0 <= penalty <= 5
         except AssertionError:
@@ -252,7 +363,7 @@ class ExperimentFit(Experiment):
         p_cb = np.zeros(self.N_seq)
         for i,nb in enumerate(self.seq):    # weighted sum over s_b=0,1
             p_cb[i] = p_cb_given_sb_nb[(1, nb)]*pairing_probs[i] + p_cb_given_sb_nb[(0, nb)]*(1-pairing_probs[i])
-        return p_cb, pairing_probs
+        return p_cb
 
     # 2a: mutation profile model
     def compute_mutation_profile(self, m0, m1,eps_b, p_cb):
@@ -278,7 +389,7 @@ class ExperimentFit(Experiment):
         m = self.compute_penalty_m(mu, p_b)
         dm = .02
         # compute pp for forward difference
-        pairing_probs_plus = self.compute_ps_from_scratch(m+dm, lambda_sc)
+        pairing_probs_plus = self.get_ps(m+dm, lambda_sc, self.use_interpolated_ps)
         dps_dm = (pairing_probs_plus - p_sb)/dm # this should be the same as summing over the derivatives wrt lambda_j
         # dm_dmu
         dm_dmu = self.beta*math.exp(self.beta*mu)*(math.exp(self.beta*p_b)-1) #numerator
@@ -346,34 +457,16 @@ class ExperimentFit(Experiment):
                 dMb_dpbind[mask, j] *= -exp_neg_eps_b[mask] * exp_diff
         return dMb_dpbind
 
-    def dMb_dlambda_sc(self, mu, p_b, p_bind, m0, m1, eps_b, p_sb, lambda_sc):
+    def dMb_dlambda_sc(self, mu, p_b, p_bind, m0, m1, eps_b, lambda_sc):
         if not self.infer_1D_sc:
             return np.full((self.N_seq, self.N_seq), np.nan)
-        # compute dps_dlambda_j
-        p_i_paired_given_j_unpaired = np.zeros((self.N_seq, self.N_seq))
-        for j in range(self.N_seq):
-            # basically what we do in compute_ps_from_scratch but we add an hard constraint on j
-            fc = RNA.fold_compound(self.seq)
-            RNA.cvar.temperature = self.temp_C
-            fc.hc_add_up(j+1) # forbid pairing at position j
-            self.apply_penalty_for_paired_bases(self.compute_penalty_m(mu, p_b), fc)
-            self.apply_soft_constraints(lambda_sc, fc)
-            p_i_paired_given_j_unpaired[:, j] = self.compute_pairing_probabilities(fc)
-        # tested with explicit loop, vectorization should be ok
-        first_term = (1-p_sb[np.newaxis,:]) * (p_sb[:,np.newaxis] - p_i_paired_given_j_unpaired)
-        second_term = (1-p_sb[:,np.newaxis]) * (p_sb[np.newaxis,:] - p_i_paired_given_j_unpaired.T)
-        if self.debug:
-            assert np.max(np.abs(first_term - second_term)) < 1e-6
-        dps_i_dlambda_j = -(first_term + second_term)/(2*self.kBT)
-        dps_i_dlambda_j/= 2  # DONT KNOW WHY LOL: compared with numerical and seemed necessary
-        # Finite difference comparison for dps_i_dlambda_j:
-
+        penalty = self.compute_penalty_m(mu, p_b)
+        dps_i_dlambda_j =  self.get_dps_dlambda_sc(penalty, lambda_sc, self.use_interpolated_ps)
         # compute dpc_i_dlambda_j
         _, _, p_cb_given_sb_nb = self.compute_mu_dependent_quantities(mu, p_b, p_bind)
         dpc_i_dlambda_j = np.full((self.N_seq, self.N_seq), np.nan)
         for i, nb in enumerate(self.seq):
             dpc_i_dlambda_j[i, :] = (p_cb_given_sb_nb[(1, nb)]-p_cb_given_sb_nb[(0, nb)]) * dps_i_dlambda_j[i, :]
-
         # compute dMb_dlambda_j, also this was tested with explicit loop
         dMb_dlambda_j = -np.exp(-eps_b)[:,np.newaxis] * (math.exp(-m1) - math.exp(-m0)) * dpc_i_dlambda_j
         return dMb_dlambda_j
@@ -386,7 +479,7 @@ class ExperimentFit(Experiment):
         dMb_dpbind = self.dMb_dpbind(mu, p_b, p_bind, m0, m1, p_sb, eps_b)
         dMb_dm0 = np.exp(-eps_b) * (1 - p_cb) * math.exp(-m0)
         dMb_dm1 = np.exp(-eps_b) * p_cb * math.exp(-m1)
-        dMb_dlambda_sc = self.dMb_dlambda_sc(mu, p_b, p_bind, m0, m1, eps_b, p_sb, lambda_sc)
+        dMb_dlambda_sc = self.dMb_dlambda_sc(mu, p_b, p_bind, m0, m1, eps_b, lambda_sc)
         return dMb_dmu, dMb_dpb, dMb_dpbind, dMb_dm0, dMb_dm1, dMb_dlambda_sc
 
 
@@ -400,17 +493,8 @@ class ExperimentFit(Experiment):
             mut_rate_model: np.array, predicted mutation profile (values in (0,1))
             grad_of_M: dict {param_name: grad_wrt_param} or None if compute_gradient is False'''
         mu_j = mu_r + self.kBT * np.log((self.conc_mM+.1)/1000) if self.conc_mM is not None else mu_r
-        p_cb, p_sb = self.compute_p_cb_and_ps_from_scratch(mu_j, p_b, p_bind, lambda_sc)
-        mut_rate_model = self.compute_mutation_profile(m0, m1, self.eps_b, p_cb)
-        # assert mut_rate_model is in (0,1)
-        try:
-            assert np.all(mut_rate_model >= 0)
-            assert np.all(mut_rate_model <= 1)
-        except AssertionError:
-            self.logger.warning('Warning, mut rate is not in (0,1) for system %s.', self.ID)
-            self.logger.warning(f'mu_r: {mu_r}, p_b: {p_b}, p_bind: {p_bind}, m0: {m0}, m1: {m1}, eps_b: {self.eps_b}')
-            self.logger.warning(f'lambda_sc: {lambda_sc}')
-        # update gradient
+        p_sb = self.get_ps(self.compute_penalty_m(mu_j, p_b), lambda_sc, interpolated=self.use_interpolated_ps)
+        p_cb = self.compute_p_cb(mu_j, p_b, p_bind, p_sb)
         if compute_gradient:
             dM_dmu, dM_dpb, dM_dpbind, dM_dm0, dM_dm1, dM_dlambda_sc = self.all_derivatives(mu_j, p_b, p_bind, m0, m1, p_cb, self.eps_b, p_sb, lambda_sc)
             for i, dMi_dtheta_j_partial in enumerate([dM_dmu, dM_dpb, dM_dpbind, dM_dm0, dM_dm1, dM_dlambda_sc]):
@@ -428,6 +512,16 @@ class ExperimentFit(Experiment):
                 grad_of_M['lambda_sc'] = None
         else:
             grad_of_M = None
+
+        mut_rate_model = self.compute_mutation_profile(m0, m1, self.eps_b, p_cb)
+        # assert mut_rate_model is in (0,1)
+        try:
+            assert np.all(mut_rate_model >= 0)
+            assert np.all(mut_rate_model <= 1)
+        except AssertionError:
+            self.logger.warning('Warning, mut rate is not in (0,1) for system %s.', self.ID)
+            self.logger.warning(f'mu_r: {mu_r}, p_b: {p_b}, p_bind: {p_bind}, m0: {m0}, m1: {m1}, eps_b: {self.eps_b}')
+            self.logger.warning(f'lambda_sc: {lambda_sc}')
         # quantities that depend on the experiment data such as dL/dM will be computed by multisys_loss_and_grad
         return mut_rate_model, grad_of_M
     
@@ -506,7 +600,7 @@ def generate_lambdas_indices(systems, DMS_mode, infer_1D_sc):
 class System:
     '''Collect multiple experiments from the same system (different concentrations or replicas) and initialize the ExperimentFit instances.
     Contains also plotting functions.'''
-    def __init__(self, experiments, validation_exps, debug, do_plots, infer_1D_sc, logger, custom_mask=None):
+    def __init__(self, experiments, validation_exps, debug, do_plots, infer_1D_sc, logger, use_interpolated_ps, custom_mask=None):
         self.logger = logger
         self.exps_train = [exp for exp in experiments] if experiments else None
         self.exps_val = [exp for exp in validation_exps] if validation_exps else None
@@ -525,6 +619,7 @@ class System:
         self.kBT = (self.temp_K * kb)
         self.debug = debug
         self.exps_all = [exp for exp in (self.exps_train if self.exps_train else []) + (self.exps_val or [])]
+        self.use_interpolated_ps = use_interpolated_ps and infer_1D_sc
         
         # Store masking parameters
         self.custom_mask = custom_mask
@@ -536,8 +631,8 @@ class System:
         else:
             self.eps_b = self.get_eps_b_from_zeroconc_profiles()
         # initialize ExperimentFit instances
-        self.exp_fits_train = [ExperimentFit(exp, infer_1D_sc=infer_1D_sc, eps_b=self.eps_b, is_training=True, debug=debug, do_plots=do_plots, logger=self.logger, custom_mask=self.custom_mask) for exp in experiments] if experiments else None
-        self.exp_fits_val = [ExperimentFit(exp, infer_1D_sc=infer_1D_sc, eps_b=self.eps_b, is_training=False, debug=debug, do_plots=do_plots, logger=self.logger, custom_mask=self.custom_mask) for exp in validation_exps] if validation_exps else None
+        self.exp_fits_train = [ExperimentFit(exp, infer_1D_sc=infer_1D_sc, eps_b=self.eps_b, is_training=True, debug=debug, do_plots=do_plots, logger=self.logger, custom_mask=self.custom_mask, use_interpolated_ps=self.use_interpolated_ps) for exp in experiments] if experiments else None
+        self.exp_fits_val = [ExperimentFit(exp, infer_1D_sc=infer_1D_sc, eps_b=self.eps_b, is_training=False, debug=debug, do_plots=do_plots, logger=self.logger, custom_mask=self.custom_mask, use_interpolated_ps=self.use_interpolated_ps) for exp in validation_exps] if validation_exps else None
         self.exp_fits_all = [exp_fit for exp_fit in (self.exp_fits_train or []) + (self.exp_fits_val or [])]
         self.reps = set([exp.rep_number for exp in self.exps_all])
         # assert that all experiments have the same system attributes
@@ -588,16 +683,16 @@ class System:
         for exp_fit, color in zip(exp_fits_dict.values(), colors):
             mu_j = mu_r + self.kBT * np.log((exp_fit.conc_mM+.1)/1000) if exp_fit.conc_mM is not None else mu_r
             ls = '-' 
-            pp = exp_fit.compute_ps_from_scratch(exp_fit.compute_penalty_m(mu_j, p_b), lambda_sc)
+            pp = exp_fit.get_ps(exp_fit.compute_penalty_m(mu_j, p_b), lambda_sc, interpolated=self.use_interpolated_ps)
             indices = np.arange(self.N_seq)
             if hasattr(exp_fit, 'df'):
                 if exp_fit.df is not None:
                     indices = exp_fit.df.index
             ax.plot(indices, pp, label=f'{exp_fit.conc_mM}mM', linestyle=ls, color=color)
-            pp_no_penalty = exp_fit.compute_ps_from_scratch(0, np.zeros(self.N_seq))
+            pp_no_penalty = exp_fit.get_ps(0.0, lambda_sc, interpolated=self.use_interpolated_ps)
             ax.plot(indices, pp_no_penalty, label=f'{exp_fit.conc_mM}mM no penalty no lambdas', linestyle='--', alpha=.5)
             if plot_no_lambda_case and lambda_sc is not None:
-                pp_no_lambda = exp_fit.compute_ps_from_scratch(exp_fit.compute_penalty_m(mu_j, p_b), np.zeros(self.N_seq))
+                pp_no_lambda = exp_fit.get_ps(exp_fit.compute_penalty_m(mu_j, p_b), np.zeros(self.N_seq), interpolated=self.use_interpolated_ps)
                 ax.plot(indices, pp_no_lambda, label=f'{exp_fit.conc_mM}mM no lambda', linestyle='-.')
         ax.set_title(self.sys_name)
         ax.set_xlabel('Position')
@@ -798,6 +893,7 @@ class MultiSystemsFit:
     fix_physical_params: bool = False  # if True, the physical parameters are fixed
     fix_lambda_sc: bool = False  # if True, the lambda_sc parameters are fixed
     iteration_count: int = 0  # number of iterations
+    use_interpolated_ps: bool = False  # whether to use interpolated pairing probabilities
     # These attributes are initialized in __post_init__
     output_dir: str = field(init=False)
     systems: List = field(init=False)
@@ -836,6 +932,7 @@ class MultiSystemsFit:
         # Write the log file header
         self.write_log_file_header()
         self.last_plot_callback_time = None
+        self.evaluation_count = 0
         self.params_history = {'mu_r': [], 'p_b': [], 'p_bind': {key: [] for key in [(0, 'A'), (0, 'C'), (0, 'G'), (0, 'U'), (1, 'A'), (1, 'C'), (1, 'G'), (1, 'U')]}, 'm0': [], 'm1': []}
 
     def _initialize_systems(self, experiments, validation_exps):
@@ -851,7 +948,7 @@ class MultiSystemsFit:
             validation_exps = systems_dict_val[system_name] if systems_dict_val and system_name in systems_dict_val else None
             # Note: custom_mask is always None here since MultiSystemsFit doesn't support it yet
             systems[system_name] = System(train_exps, validation_exps, \
-                                         self.debug, self.do_plots, self.infer_1D_sc, self.logger, custom_mask=None)
+                                         self.debug, self.do_plots, self.infer_1D_sc, self.logger, custom_mask=None, use_interpolated_ps=self.use_interpolated_ps)
         return list(systems.values())
 
     def _generate_params_positions(self):
@@ -1042,10 +1139,14 @@ class MultiSystemsFit:
                 self.logger.info('Fitting process interrupted by user with KeyboardInterrupt.\n')
                 self.logger.info(self._create_interim_result_string(self.params_last_callback, "KeyboardInterrupt"))
             except Exception as e:
-                self.logger.exception(f'Error in fitting process: {e}')
+                err_msg = f'Error in fitting process: {e}'
+                print(err_msg)
+                self.logger.exception(err_msg)
                 raise e
             finally:
-                print(f'Finished fitting process of {self.systems[0].sys_name}, {datetime.datetime.now()}')
+                finished_msg = f'Finished fitting process of {self.systems[0].sys_name}, {datetime.datetime.now()}'
+                print(finished_msg)
+                self.logger.info(finished_msg)
                 self.save_results()
                 self.logger.info(f"Execution finished in {datetime.datetime.now() - start_time}")
         return self.fit_result if hasattr(self, 'fit_result') else None
@@ -1074,9 +1175,26 @@ class MultiSystemsFit:
         grad_newshape = np.zeros(self.N_params_tot)
         for param, pos in system.dict_with_params_pos.items():
             if param != 'p_bind':
-                if type(pos) == int:    # otherwise numpy give a warning
-                    grad_system[param] = grad_system[param][0]
-                grad_newshape[pos] = grad_system[param]
+                grad_val = grad_system[param]
+                if isinstance(pos, int):
+                    grad_array = np.asarray(grad_val)
+                    if grad_array.size == 0:
+                        grad_value = 0.0
+                    elif grad_array.size == 1:
+                        grad_value = float(grad_array.reshape(-1)[0])
+                    else:
+                        grad_value = float(grad_array.reshape(-1)[0])
+                        self.logger.debug(
+                            "Gradient for parameter '%s' had size %d; using first element for position %d.",
+                            param, grad_array.size, pos
+                        )
+                    grad_newshape[pos] = grad_value
+                else:
+                    grad_array = np.asarray(grad_val).reshape(-1)
+                    if len(pos) != grad_array.size:
+                        raise ValueError(f"Gradient size {grad_array.size} for parameter '{param}' does not match mapped positions {pos}.")
+                    for idx, value in zip(pos, grad_array):
+                        grad_newshape[idx] = value
             else:
                 # For p_bind, grad_system['p_bind'] is a dictionary.
                 # Define the order for flattening according to DMS_mode.
@@ -1227,6 +1345,16 @@ class MultiSystemsFit:
         if self.fix_lambda_sc:
             # Set lambda_sc gradient to zero if not inferring 1D soft constraints
             grad_tot[8 if self.DMS_mode else 12:] = 0
+        
+        # create a subdirectory to store parameters at each call
+        os.makedirs(os.path.join(self.output_dir, 'params_at_calls'), exist_ok=True)
+        os.makedirs(os.path.join(self.output_dir, 'loss_at_calls'), exist_ok=True)
+        np.savetxt(os.path.join(self.output_dir, 'loss_at_calls', f'loss_call_{self.evaluation_count}.txt'), np.array([loss_train]))
+        np.savetxt(os.path.join(self.output_dir, 'params_at_calls', f'params_call_{self.evaluation_count}.txt'), params_1D)
+        if compute_gradient:
+            os.makedirs(os.path.join(self.output_dir, 'grad_at_calls'), exist_ok=True)
+            np.savetxt(os.path.join(self.output_dir, 'grad_at_calls', f'grad_call_{self.evaluation_count}.txt'), grad_tot)
+        self.evaluation_count += 1
             
         return loss_train, grad_tot
 
@@ -1379,17 +1507,20 @@ if __name__ == '__main__':
     experiments_Redmond = [exp for exp in experiments_Redmond if exp.conc_mM != 85]
     experiments_Redmond_train = [exp for exp in experiments_Redmond if exp.system_name not in ['hc16', 'bact_RNaseP_typeA']]
     experiments_Redmond_val = [exp for exp in experiments_Redmond if exp.system_name in ['hc16', 'bact_RNaseP_typeA']]
+    experiments_new_Redmond = [Experiment(path) for path in Experiment.paths_to_newseq_WT_data_txt]
 
     args_multi_sys ={
-        'experiments': experiment_cspA_37C_train,
+        #'experiments': experiment_cspA_37C_train,
+        'experiments': experiments_new_Redmond,
         'validation_exps': None,
         #'output_suffix': 'nuovo',
-        #'debug': True,
+        'debug': True,
         'infer_1D_sc': True,
-        #'guess': 'random',
+        'guess': 'fits/newseq_fix_1/newseqWT/params1D.txt',
         #'overwrite': True,
-        #'check_gradient': True
+        #'check_gradient': True,
         #'fix_physical_params': True,
+        'use_interpolated_ps': True,
     }
     multi_sys = MultiSystemsFit(**args_multi_sys)
 # %%
