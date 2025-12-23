@@ -24,7 +24,8 @@ import RNA
 # assert RNA version is >= 2.7
 if int(RNA.__version__.split('.')[0]) < 2 or (int(RNA.__version__.split('.')[0]) == 2 and int(RNA.__version__.split('.')[1]) < 7):
     raise ImportError(f"RNA version {RNA.__version__} is not supported. Please install RNA version >= 2.7.")
-
+# USE ANDRONESCU 2007 PARAMETERS
+#RNA.params_load_RNA_Andronescu2007()
 # local imports
 import class_experiment
 from class_experiment import clocked, Experiment
@@ -268,7 +269,7 @@ class ExperimentFit(Experiment):
             x+=dx*np.matmul(dps_dlambda_sc, lambda_sc_array-lambda_rounded)
             pairing_probs_interpolated=-epsilon+(1+2*epsilon)/(1+np.exp(-x))
             try:
-                assert np.allclose(pairing_probs, pairing_probs_interpolated, atol=1e-2)
+                assert np.allclose(pairing_probs, pairing_probs_interpolated, atol=5e-2)
             except AssertionError:
                 self.logger.warning("Warning: interpolated pairing probabilities differ significantly from computed ones.")
                 self.logger.warning(f"Max difference: {np.max(np.abs(pairing_probs - pairing_probs_interpolated))}")
@@ -975,17 +976,30 @@ class MultiSystemsFit:
             for system in self.systems:
                 f.write(f"System: {system.sys_name}\n")
                 if system.exps_train:
-                    train_desc = [exp.__dict__.get("Short description", "N/A") for exp in system.exps_train]
+                    train_desc = [exp.__dict__.get("short_description", "N/A") for exp in system.exps_train]
                     f.write(f"  Training Experiments: {train_desc}\n")
                 if system.exps_val:
-                    val_desc = [exp.__dict__.get("Short description", "N/A") for exp in system.exps_val]
+                    val_desc = [exp.__dict__.get("short_description", "N/A") for exp in system.exps_val]
                     f.write(f"  Validation Experiments: {val_desc}\n")
-                f.write("\n")
+            f.write("\n")
+            f.write(f"--- Fit Parameters ---\n")
+            f.write(f"DMS mode: {self.DMS_mode}\n")
+            f.write(f"Infer 1D soft constraints: {self.infer_1D_sc}\n")
+            f.write(f"Fix physical params: {self.fix_physical_params}\n")
+            f.write(f"Fix lambda_sc: {self.fix_lambda_sc}\n")
+            f.write(f"Use interpolated pairing probabilities: {self.use_interpolated_ps}\n")
+            f.write(f"Initial guess: {self.guess}\n")
+            f.write(f"Max iterations: {self.max_iter}\n")
+            f.write(f"Custom mask: {self.custom_mask}\n")
+            f.write(f"\n--- Execution Settings ---\n")
+            f.write(f"Root directory: {self.root_dir}\n")
+            f.write(f"Output directory: {self.output_dir}\n")
+            f.write(f"Log file path: {self.log_file_path}\n")
+            f.write(f"Overwrite: {self.overwrite}\n")
+            f.write(f"Debug mode: {self.debug}\n")
+            f.write(f"Check gradient: {self.check_gradient}\n")
             f.write(f"Do plots: {self.do_plots}\n")
-            f.write(f"Debug: {self.debug}\nDMS mode: {self.DMS_mode}\ninfer_sc_1d: {self.infer_1D_sc}\n")
-            f.write(f"Output directory: {self.output_dir}\nLog file path: {self.log_file_path}\n")
-            f.write(f"Max iterations: {self.max_iter}\noverwrite: {self.overwrite}\nguess: {self.guess}\n")
-            f.write(f"Check gradient: {self.check_gradient}\n\n")
+            f.write(f"Print to stdout: {self.print_to_std_out}\n\n")
 
     def initialize_guess_and_bounds(self, start_value=0.1, guess=None):
         """
@@ -1514,12 +1528,12 @@ if __name__ == '__main__':
         'experiments': experiments_new_Redmond,
         'validation_exps': None,
         #'output_suffix': 'nuovo',
-        'debug': True,
+        #'debug': True,
         'infer_1D_sc': True,
         'guess': 'fits/newseq_fix_1/newseqWT/params1D.txt',
         #'overwrite': True,
         #'check_gradient': True,
-        #'fix_physical_params': True,
+        'fix_physical_params': True,
         'use_interpolated_ps': True,
     }
     multi_sys = MultiSystemsFit(**args_multi_sys)

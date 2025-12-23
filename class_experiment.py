@@ -105,6 +105,7 @@ def clocked(func):
 class Experiment:
     newseqWT_fastq_names = [fastq_name.removesuffix('.fastq') for fastq_name in os.listdir(f"{os.environ.get('RNA_STRUCT_HOME')}/Newseq/fastq") if fastq_name.endswith('.fastq')]
     paths_to_newseq_WT_data_txt = [f"{os.environ.get('RNA_STRUCT_HOME')}/Newseq/RNAf_results/{fastq_name}/rf_map_draco_params/rf_count/{fastq_name}_sorted.txt" for fastq_name in newseqWT_fastq_names]
+    paths_to_newseq_WT_data_txt_filter_125 = [f"{os.environ.get('RNA_STRUCT_HOME')}/Newseq/RNAf_results/{fastq_name}/rf_map_filter125/rf_count/{fastq_name}_sorted.txt" for fastq_name in newseqWT_fastq_names]
     paths_to_redmond_ivt_data_txt = [f'{os.environ.get("RNA_STRUCT_HOME")}/RedmondData/ivt_2/Rep{rep_num}_{conc_mM}mM/{system}/rfcount_ndni/LAST_MD_sorted.txt' for rep_num in range(1,3) for conc_mM in [0,8,17,34,57,85] for system in ['bact_RNaseP_typeA', 'hc16', 'HCV_IRES', 'tetrahymena_ribozyme', 'V_chol_gly_riboswitch']]
     SRRs_cspA_10C = ['SRR6123774','SRR6123775','SRR6507967', 'SRR6507968']
     paths_to_cspA_10C_data_txt = [f'{os.environ.get("RNA_STRUCT_HOME")}/data_validation_draco/{SRR}/rf_map_draco_params_170_nt/rf_count/{SRR}_sorted.txt' for SRR in SRRs_cspA_10C]
