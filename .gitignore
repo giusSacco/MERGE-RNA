@@ -223,3 +223,11 @@ interactive_mut_profile_plotly.py
 explore_pdb.py
 explore_pdb_interactive.py
 arcplots.html
+.github/copilot-instructions.md
+.github/agents/programming.agent.md
+initial_guesses_for_newseqWT/guess_1.txt
+initial_guesses_for_newseqWT/guess_2.txt
+initial_guesses_for_newseqWT/guess_3.txt
+initial_guesses_for_newseqWT/guess_4.txt
+initial_guesses_for_newseqWT/guess_5.txt
+initial_guesses_for_newseqWT/guess_6.txt
