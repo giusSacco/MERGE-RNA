@@ -160,7 +160,7 @@ def safe_run_fit(multi_sys_instance):
         print(f"Error during fit: {e}")
         return e
 
-def run_parallel_fits(list_of_args_multi_sys, infer_1D_sc,overwrite=False, root_dir = None, initial_guess=None, fix_physical_params=False, fix_lambda_sc=False):
+def run_parallel_fits(list_of_args_multi_sys, infer_1D_sc, overwrite=False, root_dir=None, initial_guess=None, fit_mode='all', fix_physical_params=False, fix_lambda_sc=False):
     '''Run multiple fits in parallel using multiprocessing and show progress with tqdm.'''
     # Disable printing to stdout
     list_of_args_multi_sys = [{**args, 'print_to_std_out': False} for args in list_of_args_multi_sys]
@@ -183,10 +183,27 @@ def run_parallel_fits(list_of_args_multi_sys, infer_1D_sc,overwrite=False, root_
         print(args.get('root_dir', 'fits') +'/'+ args['output_suffix'])
     if initial_guess is not None:
         list_of_args_multi_sys = [{**args, 'guess': initial_guess} for args in list_of_args_multi_sys]
-    if fix_physical_params:
-        list_of_args_multi_sys = [{**args, 'fix_physical_params': True} for args in list_of_args_multi_sys]
-    if fix_lambda_sc:
-        list_of_args_multi_sys = [{**args, 'fix_lambda_sc': True} for args in list_of_args_multi_sys]
+    
+    # Handle fit_mode vs legacy flags (legacy flags take precedence for backwards compatibility)
+    effective_fit_mode = fit_mode
+    if fix_physical_params and fix_lambda_sc:
+        raise ValueError("Cannot use both --fix-physical-params and --fix-lambda-sc together")
+    elif fix_physical_params:
+        effective_fit_mode = 'lambda_only'
+        print("Note: --fix-physical-params is deprecated; use --fit-mode lambda_only instead")
+    elif fix_lambda_sc:
+        effective_fit_mode = 'physical_only'
+        print("Note: --fix-lambda-sc is deprecated; use --fit-mode physical_only instead")
+    
+    # Add fit_mode to all args (only if not using legacy flags which set fix_* directly)
+    if not (fix_physical_params or fix_lambda_sc):
+        list_of_args_multi_sys = [{**args, 'fit_mode': effective_fit_mode} for args in list_of_args_multi_sys]
+    else:
+        # Legacy behavior: use fix_physical_params and fix_lambda_sc directly
+        if fix_physical_params:
+            list_of_args_multi_sys = [{**args, 'fix_physical_params': True} for args in list_of_args_multi_sys]
+        if fix_lambda_sc:
+            list_of_args_multi_sys = [{**args, 'fix_lambda_sc': True} for args in list_of_args_multi_sys]
 
     multi_sys_list = [MultiSystemsFit(**args) for args in list_of_args_multi_sys]
     # Inside run_parallel_fits
@@ -243,16 +260,24 @@ if __name__ == '__main__':
         help="Specify the system to analyze (cspA, redmond, cspAcomb, cspAcomb_together, redmond_together, redmond_crossval, cspAcomb_synthetic, cspAcomb_together_synthetic, synthetic_comb, synthetic_comb_together, newseqWT). Only one system can be selected."
     )
     parser.add_argument(
+        "--fit-mode",
+        type=str,
+        choices=['all', 'physical_only', 'lambda_only', 'sequential'],
+        default='all',
+        help="Fitting strategy: all (simultaneous, default for backwards compat), physical_only, lambda_only, or sequential"
+    )
+    # Legacy flags - kept for backwards compatibility
+    parser.add_argument(
         "--fix-physical-params",
         action="store_true",
         default=False,
-        help="Set flag to use fixed physical parameters"
+        help="(Legacy) Set flag to use fixed physical parameters. Prefer --fit-mode lambda_only"
     )
     parser.add_argument(
         "--fix-lambda-sc",
         action="store_true",
         default=False,
-        help="Set flag to use fixed lambda_sc"
+        help="(Legacy) Set flag to use fixed lambda_sc. Prefer --fit-mode physical_only"
     )
     args = parser.parse_args()
 
@@ -264,6 +289,7 @@ if __name__ == '__main__':
         root_dir=args.root_dir, 
         overwrite=args.overwrite,
         initial_guess=args.initial_guess,
+        fit_mode=args.fit_mode,
         fix_physical_params=args.fix_physical_params,
         fix_lambda_sc=args.fix_lambda_sc
     )

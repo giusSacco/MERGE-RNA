@@ -106,7 +106,7 @@ def convert_p_bind_dict_to_1d(p_bind_dict, DMS_mode):
         ])
 class ExperimentFit(Experiment):
     '''Takes in input an instance of Experiment (data at a given concentration) and computes the mutation profile and the loss, and their derivatives with respect to the parameters.'''
-    def __init__(self, exp, *, infer_1D_sc, eps_b, is_training, debug=False, do_plots=False, logger = logging.getLogger('main'), custom_mask=None, use_interpolated_ps=False):
+    def __init__(self, exp, *, infer_1D_sc, eps_b, is_training, debug=False, do_plots=False, logger = logging.getLogger('main'), custom_mask=None, mask_edges=None, use_interpolated_ps=False):
         # Initialize the Experiment attributes. These include reagent, concentration, sequence, df, etc.
         if hasattr(exp, 'path_to_info_txt'):    # this means we have all the information of the experiment in that file
             super().__init__(exp.path_to_info_txt)
@@ -145,28 +145,113 @@ class ExperimentFit(Experiment):
         self._cached_gradients = None
         
         # Initialize position mask
-        if custom_mask is not None:
-            # Use the provided custom mask
-            if len(custom_mask) != self.N_seq:
-                raise ValueError(f"Custom mask length {len(custom_mask)} does not match sequence length {self.N_seq}")
-            self.position_mask = np.array(custom_mask, dtype=bool)
-            n_masked = np.sum(~self.position_mask)
-            self.logger.info(f"ExperimentFit initialized with custom mask: {n_masked} positions excluded from loss calculation")
-        else:
-            # Default behavior: mask first and last 25 nucleotides
-            self.position_mask = np.ones(self.N_seq, dtype=bool)
-            if not self.is_synthetic:
-                mask_start, mask_end = 25, 25
-            else:
-                mask_start, mask_end = 0, 0
-            if mask_start > 0:
-                self.position_mask[:mask_start] = False
-            if mask_end > 0:
-                self.position_mask[-mask_end:] = False
-            
-            self.logger.debug(f"ExperimentFit initialized with default edge masking: first {mask_start} and last {mask_end} positions excluded from loss calculation")
+        # Priority: custom_mask > mask_edges > default adaptive behavior
+        self.position_mask = self._initialize_mask(custom_mask, mask_edges)
         
         self.logger.debug(f"Effective sequence length for fitting: {np.sum(self.position_mask)} / {self.N_seq}")
+
+    def _initialize_mask(self, custom_mask, mask_edges):
+        """Initialize the position mask for loss calculation.
+        
+        Args:
+            custom_mask: Either a boolean array, a string of '0'/'1' characters, 
+                        or a path to a file containing such a string. True/1 = include position.
+            mask_edges: Tuple (start, end) specifying how many nucleotides to mask at each end,
+                       or None to use default adaptive masking.
+        
+        Returns:
+            np.ndarray: Boolean mask where True = position is included in loss calculation
+        """
+        if custom_mask is not None:
+            return self._parse_custom_mask(custom_mask)
+        elif mask_edges is not None:
+            return self._apply_edge_mask(mask_edges)
+        else:
+            return self._apply_default_mask()
+    
+    def _parse_custom_mask(self, custom_mask):
+        """Parse custom_mask from various input formats."""
+        # If it's a file path, load the mask from file
+        if isinstance(custom_mask, str) and os.path.isfile(custom_mask):
+            with open(custom_mask, 'r') as f:
+                mask_string = f.read().strip()
+            self.logger.info(f"Loaded custom mask from file: {custom_mask}")
+            custom_mask = mask_string
+        
+        # If it's a string of 0s and 1s, convert to boolean array
+        if isinstance(custom_mask, str):
+            if not all(c in '01' for c in custom_mask):
+                raise ValueError("Mask string must contain only '0' and '1' characters")
+            custom_mask = [c == '1' for c in custom_mask]
+        
+        # Validate length
+        if len(custom_mask) != self.N_seq:
+            raise ValueError(f"Custom mask length {len(custom_mask)} does not match sequence length {self.N_seq}")
+        
+        mask = np.array(custom_mask, dtype=bool)
+        n_masked = np.sum(~mask)
+        self.logger.info(f"ExperimentFit initialized with custom mask: {n_masked} positions excluded from loss calculation")
+        return mask
+    
+    def _apply_edge_mask(self, mask_edges):
+        """Apply edge masking with user-specified values."""
+        mask_start, mask_end = mask_edges
+        
+        # Validate that mask doesn't exclude all positions
+        total_masked = mask_start + mask_end
+        if total_masked >= self.N_seq:
+            raise ValueError(f"Edge masking ({mask_start} + {mask_end} = {total_masked}) would exclude "
+                           f"all {self.N_seq} positions. Reduce mask_edges values.")
+        
+        mask = np.ones(self.N_seq, dtype=bool)
+        if mask_start > 0:
+            mask[:mask_start] = False
+        if mask_end > 0:
+            mask[-mask_end:] = False
+        
+        self.logger.info(f"ExperimentFit initialized with edge masking: first {mask_start} and last {mask_end} positions excluded")
+        return mask
+    
+    def _apply_default_mask(self):
+        """Apply default adaptive masking based on sequence length."""
+        mask = np.ones(self.N_seq, dtype=bool)
+        
+        # Synthetic data: no masking
+        if self.is_synthetic:
+            self.logger.debug("Synthetic data: no edge masking applied")
+            return mask
+        
+        # Default: mask first and last 25 nucleotides
+        default_mask_size = 25
+        
+        # For short sequences, use adaptive masking
+        if self.N_seq < 100:
+            # Mask at most 10% of sequence on each end, minimum 0
+            adaptive_mask_size = max(0, self.N_seq // 10)
+            self.logger.warning(
+                f"Short sequence ({self.N_seq} nt): using adaptive edge masking of {adaptive_mask_size} nt "
+                f"instead of default {default_mask_size} nt. "
+                f"Consider providing explicit mask_edges=(start, end) for fine control."
+            )
+            mask_start = mask_end = adaptive_mask_size
+        elif self.N_seq < 2 * default_mask_size + 10:
+            # Sequence is close to minimum viable length with default masking
+            adaptive_mask_size = (self.N_seq - 10) // 2  # Keep at least 10 positions
+            self.logger.warning(
+                f"Sequence length ({self.N_seq} nt) is close to minimum for default masking. "
+                f"Using {adaptive_mask_size} nt edge masking instead of {default_mask_size}."
+            )
+            mask_start = mask_end = adaptive_mask_size
+        else:
+            mask_start = mask_end = default_mask_size
+        
+        if mask_start > 0:
+            mask[:mask_start] = False
+        if mask_end > 0:
+            mask[-mask_end:] = False
+        
+        self.logger.debug(f"ExperimentFit initialized with default edge masking: first {mask_start} and last {mask_end} positions excluded")
+        return mask
 
     # 0: SOFT CONSTRAINS APPLICATION
     # 0.1: sfot constrains from lambda_sc
@@ -601,7 +686,7 @@ def generate_lambdas_indices(systems, DMS_mode, infer_1D_sc):
 class System:
     '''Collect multiple experiments from the same system (different concentrations or replicas) and initialize the ExperimentFit instances.
     Contains also plotting functions.'''
-    def __init__(self, experiments, validation_exps, debug, do_plots, infer_1D_sc, logger, use_interpolated_ps, custom_mask=None):
+    def __init__(self, experiments, validation_exps, debug, do_plots, infer_1D_sc, logger, use_interpolated_ps, custom_mask=None, mask_edges=None):
         self.logger = logger
         self.exps_train = [exp for exp in experiments] if experiments else None
         self.exps_val = [exp for exp in validation_exps] if validation_exps else None
@@ -624,6 +709,7 @@ class System:
         
         # Store masking parameters
         self.custom_mask = custom_mask
+        self.mask_edges = mask_edges
         # verify if there is a 0 conc experiment
         self.concs_mM = set([exp.conc_mM for exp in self.exps_train]) if self.exps_train else set() | set([exp.conc_mM for exp in self.exps_val]) if self.exps_val else set()
         if not 0 in self.concs_mM:
@@ -632,8 +718,8 @@ class System:
         else:
             self.eps_b = self.get_eps_b_from_zeroconc_profiles()
         # initialize ExperimentFit instances
-        self.exp_fits_train = [ExperimentFit(exp, infer_1D_sc=infer_1D_sc, eps_b=self.eps_b, is_training=True, debug=debug, do_plots=do_plots, logger=self.logger, custom_mask=self.custom_mask, use_interpolated_ps=self.use_interpolated_ps) for exp in experiments] if experiments else None
-        self.exp_fits_val = [ExperimentFit(exp, infer_1D_sc=infer_1D_sc, eps_b=self.eps_b, is_training=False, debug=debug, do_plots=do_plots, logger=self.logger, custom_mask=self.custom_mask, use_interpolated_ps=self.use_interpolated_ps) for exp in validation_exps] if validation_exps else None
+        self.exp_fits_train = [ExperimentFit(exp, infer_1D_sc=infer_1D_sc, eps_b=self.eps_b, is_training=True, debug=debug, do_plots=do_plots, logger=self.logger, custom_mask=self.custom_mask, mask_edges=self.mask_edges, use_interpolated_ps=self.use_interpolated_ps) for exp in experiments] if experiments else None
+        self.exp_fits_val = [ExperimentFit(exp, infer_1D_sc=infer_1D_sc, eps_b=self.eps_b, is_training=False, debug=debug, do_plots=do_plots, logger=self.logger, custom_mask=self.custom_mask, mask_edges=self.mask_edges, use_interpolated_ps=self.use_interpolated_ps) for exp in validation_exps] if validation_exps else None
         self.exp_fits_all = [exp_fit for exp_fit in (self.exp_fits_train or []) + (self.exp_fits_val or [])]
         self.reps = set([exp.rep_number for exp in self.exps_all])
         # assert that all experiments have the same system attributes
@@ -883,16 +969,24 @@ class MultiSystemsFit:
     debug: bool = False # debug mode: additional checks and prints
     do_plots: bool = True
     description: Optional[str] = None  # this is added in the log file
-    DMS_mode: bool = True  # if True, p_bind are only 4 (instead of 8)g461
+    DMS_mode: bool = True  # if True, p_bind are only 4 (instead of 8)
     infer_1D_sc: bool = False  # inference of 1d soft constrains for each system
     max_iter: Optional[int] = None  # maximum number of iterations for the optimization
     overwrite: bool = False  # overwrite the log file if it exists
     guess: Optional[str] = None  # Initial guess: None, random, path or 'last'
     custom_mask: Optional[List] = None  # Custom mask for positions to include/exclude from fitting
+    mask_edges: Optional[tuple] = None  # Tuple (start, end) for edge masking, or None for default
     check_gradient: bool = False
     print_to_std_out: bool = True
+    # Fitting mode control - these are set by fit_mode but can also be set directly for backwards compatibility
     fix_physical_params: bool = False  # if True, the physical parameters are fixed
     fix_lambda_sc: bool = False  # if True, the lambda_sc parameters are fixed
+    # New: fit_mode controls the fitting strategy
+    # - 'all': fit all parameters together (default)
+    # - 'physical_only': only fit physical parameters, keep lambda_sc fixed
+    # - 'lambda_only': only fit lambda_sc, keep physical parameters fixed  
+    # - 'sequential': first fit physical params only, then fix them and fit lambda_sc
+    fit_mode: str = 'all'
     iteration_count: int = 0  # number of iterations
     use_interpolated_ps: bool = False  # whether to use interpolated pairing probabilities
     # These attributes are initialized in __post_init__
@@ -904,6 +998,23 @@ class MultiSystemsFit:
     last_plot_callback_time: Optional[float] = field(init=False)  # time of the last plot callback
 
     def __post_init__(self):
+        # Validate fit_mode
+        valid_modes = {'all', 'physical_only', 'lambda_only', 'sequential'}
+        if self.fit_mode not in valid_modes:
+            raise ValueError(f"Invalid fit_mode '{self.fit_mode}'. Must be one of: {valid_modes}")
+        
+        # Apply fit_mode to fix_physical_params and fix_lambda_sc
+        # (backwards compatibility: explicit fix_* settings take precedence)
+        if self.fit_mode == 'physical_only':
+            self.fix_lambda_sc = True
+        elif self.fit_mode == 'lambda_only':
+            self.fix_physical_params = True
+        # 'sequential' and 'all' modes are handled in fit()
+        
+        # Validate that sequential mode requires infer_1D_sc
+        if self.fit_mode == 'sequential' and not self.infer_1D_sc:
+            raise ValueError("fit_mode='sequential' requires infer_1D_sc=True")
+        
         # Check for custom_mask usage - not yet supported with MultiSystemsFit
         if self.custom_mask is not None:
             raise NotImplementedError(
@@ -947,9 +1058,12 @@ class MultiSystemsFit:
         for system_name in all_system_names:
             train_exps = systems_dict_train[system_name] if system_name in systems_dict_train else None
             validation_exps = systems_dict_val[system_name] if systems_dict_val and system_name in systems_dict_val else None
-            # Note: custom_mask is always None here since MultiSystemsFit doesn't support it yet
+            # Note: custom_mask is always None here since MultiSystemsFit doesn't support per-system custom masks yet
+            # mask_edges can be passed and will apply to all systems uniformly
             systems[system_name] = System(train_exps, validation_exps, \
-                                         self.debug, self.do_plots, self.infer_1D_sc, self.logger, custom_mask=None, use_interpolated_ps=self.use_interpolated_ps)
+                                         self.debug, self.do_plots, self.infer_1D_sc, self.logger, 
+                                         custom_mask=None, mask_edges=self.mask_edges, 
+                                         use_interpolated_ps=self.use_interpolated_ps)
         return list(systems.values())
 
     def _generate_params_positions(self):
@@ -1115,18 +1229,89 @@ class MultiSystemsFit:
         return "\n".join(lines)
 
     def fit(self):
-        initial_guess, bounds = self.initialize_guess_and_bounds(guess=self.guess)
-        self.logger.debug(f'Starting fitting process with {self.N_params_tot} parameters.')
-        print(f'Starting fitting process of {self.systems[0].sys_name}, {datetime.datetime.now()}')
+        """Run the optimization.
+        
+        The fitting strategy depends on self.fit_mode:
+        - 'all': Fit all parameters simultaneously (default)
+        - 'physical_only': Only fit physical parameters (mu_r, p_b, p_bind, m0, m1)
+        - 'lambda_only': Only fit soft constraints (lambda_sc)
+        - 'sequential': First fit physical params, then fix them and fit lambda_sc
+        """
+        if self.fit_mode == 'sequential':
+            return self._fit_sequential()
+        else:
+            return self._fit_single_phase()
+    
+    def _fit_sequential(self):
+        """Two-phase sequential fitting: physical params first, then lambda_sc."""
+        self.logger.info("=" * 60)
+        self.logger.info("SEQUENTIAL FITTING MODE")
+        self.logger.info("Phase 1: Fitting physical parameters only")
+        self.logger.info("=" * 60)
+        
+        # Phase 1: Fit physical parameters only
+        self.fix_lambda_sc = True
+        self.fix_physical_params = False
+        
+        phase1_result = self._fit_single_phase(phase_name="Phase 1 (physical params)")
+        
+        if phase1_result is None or not phase1_result.success:
+            self.logger.warning("Phase 1 did not converge successfully, but continuing to Phase 2...")
+        
+        # Get the fitted physical parameters from phase 1
+        phase1_params = self.params_last_callback.copy()
+        
+        self.logger.info("")
+        self.logger.info("=" * 60)
+        self.logger.info("Phase 2: Fitting soft constraints (lambda_sc) with fixed physical params")
+        self.logger.info("=" * 60)
+        
+        # Phase 2: Fix physical params, fit lambda_sc
+        self.fix_lambda_sc = False
+        self.fix_physical_params = True
+        
+        # Reset iteration count for phase 2
+        self.iteration_count = 0
+        
+        # Use phase 1 results as initial guess for phase 2
+        phase2_result = self._fit_single_phase(
+            phase_name="Phase 2 (lambda_sc)", 
+            initial_params=phase1_params
+        )
+        
+        self.logger.info("")
+        self.logger.info("=" * 60)
+        self.logger.info("SEQUENTIAL FITTING COMPLETE")
+        self.logger.info("=" * 60)
+        
+        return phase2_result
+    
+    def _fit_single_phase(self, phase_name=None, initial_params=None):
+        """Run a single optimization phase."""
+        if initial_params is not None:
+            initial_guess = initial_params
+            bounds = self.initialize_guess_and_bounds(guess=self.guess)[1]  # Only get bounds
+        else:
+            initial_guess, bounds = self.initialize_guess_and_bounds(guess=self.guess)
+        
+        phase_str = f" ({phase_name})" if phase_name else ""
+        self.logger.debug(f'Starting fitting process{phase_str} with {self.N_params_tot} parameters.')
+        print(f'Starting fitting process of {self.systems[0].sys_name}{phase_str}, {datetime.datetime.now()}')
         self.logger.info(f'Initial guess:\n{initial_guess}')
         self.logger.info(f'Bounds:\n{bounds}')
+        
+        # Log which parameters are fixed
+        if self.fix_physical_params:
+            self.logger.info("Physical parameters are FIXED (not being optimized)")
+        if self.fix_lambda_sc:
+            self.logger.info("Lambda_sc parameters are FIXED (not being optimized)")
+        
         if len(initial_guess) != self.N_params_tot:
             raise ValueError(f'Expected {self.N_params_tot} parameters, got {len(initial_guess)}')
         if len(bounds) != self.N_params_tot:
             raise ValueError(f'Expected {self.N_params_tot} bounds, got {len(bounds)}')
         
-        # Set stricter convergence criteria: reduce ftol to 1e-8 (default is 2.220446049250313e-09)
-        #options = {'ftol': 0, 'gtol': 0}
+        # Set stricter convergence criteria
         options=dict(ftol=np.nan, gtol=np.sqrt(np.finfo(float).tiny))
         if self.max_iter is not None:
             options['maxiter'] = self.max_iter
@@ -1149,7 +1334,6 @@ class MultiSystemsFit:
                     self.logger.info(f'Fit result:\n {self.fit_result}')
             except KeyboardInterrupt as e:
                 # Handle keyboard interrupt gracefully
-                # compute loss and gradient for the last params
                 self.logger.info('Fitting process interrupted by user with KeyboardInterrupt.\n')
                 self.logger.info(self._create_interim_result_string(self.params_last_callback, "KeyboardInterrupt"))
             except Exception as e:
@@ -1158,7 +1342,7 @@ class MultiSystemsFit:
                 self.logger.exception(err_msg)
                 raise e
             finally:
-                finished_msg = f'Finished fitting process of {self.systems[0].sys_name}, {datetime.datetime.now()}'
+                finished_msg = f'Finished fitting process of {self.systems[0].sys_name}{phase_str}, {datetime.datetime.now()}'
                 print(finished_msg)
                 self.logger.info(finished_msg)
                 self.save_results()

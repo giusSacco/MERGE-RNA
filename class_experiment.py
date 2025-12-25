@@ -89,6 +89,113 @@ def load_rc(filepath, sample_name, debug=False):
     return pd.DataFrame(data)
 
 
+def load_csv(filepath, sample_name=None):
+    """Load RNA mutation data from a CSV file and return it as a pandas DataFrame.
+    
+    The CSV file must have columns: pos, ref_nt, mut_count, total_count
+    Optional columns: wt_count, mut_rate, Sample
+    
+    Args:
+        filepath: Path to the CSV file
+        sample_name: Optional sample name (uses filename if not provided)
+    
+    Returns:
+        pd.DataFrame with columns: Sample, mut_count, wt_count, total_count, mut_rate, ref_nt, pos
+    """
+    if sample_name is None:
+        sample_name = os.path.basename(filepath).removesuffix('.csv')
+    
+    df = pd.read_csv(filepath)
+    
+    # Check required columns
+    required_cols = {'pos', 'ref_nt', 'mut_count', 'total_count'}
+    missing = required_cols - set(df.columns)
+    if missing:
+        raise ValueError(f"CSV file missing required columns: {missing}. "
+                        f"Required: {required_cols}. Found: {set(df.columns)}")
+    
+    # Compute derived columns if not present
+    if 'wt_count' not in df.columns:
+        df['wt_count'] = df['total_count'] - df['mut_count']
+    if 'mut_rate' not in df.columns:
+        df['mut_rate'] = df['mut_count'] / df['total_count']
+    if 'Sample' not in df.columns:
+        df['Sample'] = sample_name
+    
+    # Ensure ref_nt uses U instead of T
+    df['ref_nt'] = df['ref_nt'].replace('T', 'U')
+    
+    # Reorder columns to match load_rc output
+    df = df[['Sample', 'mut_count', 'wt_count', 'total_count', 'mut_rate', 'ref_nt', 'pos']]
+    
+    return df
+
+
+def rc_to_csv(rc_filepath, output_csv_path=None, sample_name=None):
+    """Convert an RNAframework .rc binary file to a CSV file.
+    
+    Args:
+        rc_filepath: Path to the .rc file
+        output_csv_path: Path for output CSV (defaults to same path with .csv extension)
+        sample_name: Optional sample name for the Sample column
+    
+    Returns:
+        pd.DataFrame: The loaded data
+    """
+    if sample_name is None:
+        sample_name = os.path.basename(rc_filepath).removesuffix('.rc')
+    if output_csv_path is None:
+        output_csv_path = rc_filepath.replace('.rc', '.csv')
+    
+    df = load_rc(rc_filepath, sample_name)
+    df.to_csv(output_csv_path, index=False)
+    print(f"Converted {rc_filepath} -> {output_csv_path}")
+    return df
+
+
+def create_example_csv(output_path, seq=None, coverage=10000):
+    """Create an example CSV file with random mutation data.
+    
+    Useful for testing and as a template for users to understand the expected format.
+    
+    Args:
+        output_path: Path for the output CSV file
+        seq: RNA sequence (default: 100 nt random sequence)
+        coverage: Read depth for all positions (default: 10000)
+    
+    Returns:
+        pd.DataFrame: The created example data
+    
+    Example:
+        >>> create_example_csv('example_0mM.csv', seq='AUGCAUGCAUGC' * 10)
+    """
+    if seq is None:
+        import random
+        seq = ''.join(random.choices('AUCG', k=100))
+    
+    seq = seq.replace('T', 'U')
+    n = len(seq)
+    
+    # Generate random mutation counts (low rates typical for probing)
+    mut_rates = np.random.beta(1, 100, n)  # Low mutation rates
+    mut_counts = np.random.binomial(coverage, mut_rates)
+    
+    df = pd.DataFrame({
+        'pos': range(1, n + 1),
+        'ref_nt': list(seq),
+        'mut_count': mut_counts,
+        'total_count': coverage,
+    })
+    
+    df.to_csv(output_path, index=False)
+    print(f"Created example CSV: {output_path}")
+    print(f"  Sequence length: {n} nt")
+    print(f"  Coverage: {coverage}")
+    print(f"  Mean mutation rate: {mut_counts.sum() / (n * coverage):.4f}")
+    
+    return df
+
+
 def clocked(func):
     def wrapper(*args, **kwargs):
         # Check if the first argument (self) has a logger attribute.
@@ -405,6 +512,123 @@ class Experiment:
             for key, value in info.items():
                 f.write(f"{key}:\t{value}\n")
         print(f"Experiment info file created at {output_txt_path}")
+
+    @classmethod
+    def from_csv(cls, csv_path, *, system_name, conc_mM, temp_C=37, reagent="DMS", 
+                 rep_number=1, short_description=None, **kwargs):
+        """Create an Experiment from a CSV file with mutation counts.
+        
+        The CSV file must have columns: pos, ref_nt, mut_count, total_count
+        Optional columns: wt_count, mut_rate, Sample
+        
+        Args:
+            csv_path: Path to the CSV file
+            system_name: Name of the RNA system (e.g., 'my_rna')
+            conc_mM: Probe concentration in mM (use 0 for untreated control)
+            temp_C: Temperature in Celsius (default: 37)
+            reagent: Probing reagent name (default: 'DMS')
+            rep_number: Replicate number (default: 1)
+            short_description: Short description (auto-generated if not provided)
+            **kwargs: Additional attributes to set on the Experiment
+        
+        Returns:
+            Experiment: New Experiment instance with data loaded from CSV
+        
+        Example:
+            >>> exp = Experiment.from_csv('my_data.csv', system_name='my_rna', conc_mM=20)
+        """
+        if short_description is None:
+            short_description = f"{system_name}_{conc_mM}mM_r{rep_number}"
+        
+        # Load data from CSV
+        df = load_csv(csv_path, sample_name=short_description)
+        
+        # Extract sequence from ref_nt column
+        seq = ''.join(df['ref_nt']).replace('T', 'U')
+        
+        return cls.from_dataframe(
+            df, seq=seq, system_name=system_name, conc_mM=conc_mM, 
+            temp_C=temp_C, reagent=reagent, rep_number=rep_number,
+            short_description=short_description, **kwargs
+        )
+
+    @classmethod
+    def from_dataframe(cls, df, *, seq, system_name, conc_mM, temp_C=37, reagent="DMS",
+                       rep_number=1, short_description=None, **kwargs):
+        """Create an Experiment from a pandas DataFrame with mutation counts.
+        
+        Args:
+            df: DataFrame with columns: mut_count, total_count, ref_nt, pos
+                Optional columns: wt_count, mut_rate, Sample
+            seq: RNA sequence (will be validated against df['ref_nt'])
+            system_name: Name of the RNA system
+            conc_mM: Probe concentration in mM (use 0 for untreated control)
+            temp_C: Temperature in Celsius (default: 37)
+            reagent: Probing reagent name (default: 'DMS')
+            rep_number: Replicate number (default: 1)
+            short_description: Short description (auto-generated if not provided)
+            **kwargs: Additional attributes to set on the Experiment
+        
+        Returns:
+            Experiment: New Experiment instance
+        
+        Example:
+            >>> import pandas as pd
+            >>> df = pd.DataFrame({
+            ...     'pos': [1, 2, 3],
+            ...     'ref_nt': ['A', 'U', 'G'],
+            ...     'mut_count': [10, 20, 5],
+            ...     'total_count': [1000, 1000, 1000]
+            ... })
+            >>> exp = Experiment.from_dataframe(df, seq='AUG', system_name='test', conc_mM=20)
+        """
+        if short_description is None:
+            short_description = f"{system_name}_{conc_mM}mM_r{rep_number}"
+        
+        # Validate required columns
+        required_cols = {'pos', 'ref_nt', 'mut_count', 'total_count'}
+        missing = required_cols - set(df.columns)
+        if missing:
+            raise ValueError(f"DataFrame missing required columns: {missing}")
+        
+        # Make a copy to avoid modifying the original
+        df = df.copy()
+        
+        # Compute derived columns if not present
+        if 'wt_count' not in df.columns:
+            df['wt_count'] = df['total_count'] - df['mut_count']
+        if 'mut_rate' not in df.columns:
+            df['mut_rate'] = df['mut_count'] / df['total_count']
+        if 'Sample' not in df.columns:
+            df['Sample'] = short_description
+        
+        # Ensure ref_nt uses U instead of T
+        df['ref_nt'] = df['ref_nt'].replace('T', 'U')
+        
+        # Validate sequence matches DataFrame
+        df_seq = ''.join(df['ref_nt']).replace('T', 'U')
+        seq = seq.replace('T', 'U')
+        if df_seq != seq:
+            raise ValueError(f"Sequence mismatch: provided seq has length {len(seq)}, "
+                           f"DataFrame has length {len(df_seq)}")
+        
+        # Create instance using sequence-only constructor
+        instance = cls(seq=seq, system_name=system_name, conc_mM=conc_mM, 
+                      temp_C=temp_C, reagent=reagent, rep_number=rep_number,
+                      short_description=short_description, **kwargs)
+        
+        # Override is_synthetic to False since we have real data
+        instance.is_synthetic = False
+        
+        # Attach the data
+        instance.raw_df = df.copy()
+        # Apply standard filtering: remove rows with coverage < half-mean
+        filtered_df = df[df['total_count'] >= np.mean(df['total_count']) / 2]
+        instance.df = filtered_df
+        instance.short_description = short_description
+        
+        return instance
+
 
 # %%
 def create_combined_cspA_df(pop_10, normalise_mut_rate, use_synthetic_data=False, noise=False):
