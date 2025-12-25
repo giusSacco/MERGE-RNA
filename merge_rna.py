@@ -191,13 +191,13 @@ def cmd_fit(args):
     # Determine fit mode
     fit_mode = args.fit_mode
     if fit_mode == 'sequential' and not infer_sc:
-        print("\n⚠️  WARNING: --fit-mode sequential requires soft constraints.")
+        print("\n⚠️  NOTE: --fit-mode sequential will infer soft constraints in Phase 2.")
         print("   Automatically enabling --infer-soft-constraints")
         infer_sc = True
     
     print(f"\nFit mode: {fit_mode}")
     if fit_mode == 'sequential':
-        print("   Phase 1: Fit physical parameters (mu_r, p_b, p_bind, m0, m1)")
+        print("   Phase 1: Fit physical parameters only (smaller, faster optimization)")
         print("   Phase 2: Fix physical params, fit soft constraints (lambda_sc)")
     elif fit_mode == 'physical_only':
         print("   Fitting only physical parameters")
@@ -234,6 +234,7 @@ def cmd_fit(args):
         overwrite=args.overwrite,
         guess=args.initial_guess,
         do_plots=not args.no_plots,
+        strict_convergence=getattr(args, 'strict_convergence', False),
     )
     
     multi_sys.fit()
@@ -377,6 +378,8 @@ def main():
     fit_parser.add_argument('--fit-mode', type=str, default='sequential', 
                            choices=['simultaneous', 'physical_only', 'lambda_only', 'sequential'],
                            help='Fitting strategy: simultaneous, physical_only, lambda_only, or sequential (default, recommended)')
+    fit_parser.add_argument('--strict-convergence', action='store_true', 
+                           help='Use very strict convergence (runs until timeout/numerical limit). Default uses scipy defaults.')
     fit_parser.add_argument('--mask-edges', nargs=2, type=int, metavar=('START', 'END'), help='Mask first START and last END nucleotides')
     fit_parser.add_argument('--initial-guess', type=str, help='Initial guess: None, random, last, or path to params file')
     fit_parser.add_argument('--overwrite', action='store_true', help='Overwrite existing output')

@@ -160,7 +160,7 @@ def safe_run_fit(multi_sys_instance):
         print(f"Error during fit: {e}")
         return e
 
-def run_parallel_fits(list_of_args_multi_sys, infer_1D_sc, overwrite=False, root_dir=None, initial_guess=None, fit_mode='all', fix_physical_params=False, fix_lambda_sc=False):
+def run_parallel_fits(list_of_args_multi_sys, infer_1D_sc, overwrite=False, root_dir=None, initial_guess=None, fit_mode='sequential', strict_convergence=False, fix_physical_params=False, fix_lambda_sc=False):
     '''Run multiple fits in parallel using multiprocessing and show progress with tqdm.'''
     # Disable printing to stdout
     list_of_args_multi_sys = [{**args, 'print_to_std_out': False} for args in list_of_args_multi_sys]
@@ -204,6 +204,10 @@ def run_parallel_fits(list_of_args_multi_sys, infer_1D_sc, overwrite=False, root
             list_of_args_multi_sys = [{**args, 'fix_physical_params': True} for args in list_of_args_multi_sys]
         if fix_lambda_sc:
             list_of_args_multi_sys = [{**args, 'fix_lambda_sc': True} for args in list_of_args_multi_sys]
+    
+    # Add strict_convergence to all args
+    if strict_convergence:
+        list_of_args_multi_sys = [{**args, 'strict_convergence': True} for args in list_of_args_multi_sys]
 
     multi_sys_list = [MultiSystemsFit(**args) for args in list_of_args_multi_sys]
     # Inside run_parallel_fits
@@ -266,6 +270,12 @@ if __name__ == '__main__':
         default='sequential',
         help="Fitting strategy: sequential (default), simultaneous, physical_only, or lambda_only"
     )
+    parser.add_argument(
+        "--strict-convergence",
+        action="store_true",
+        default=False,
+        help="Use very strict convergence (runs until timeout/numerical limit). Default uses scipy defaults."
+    )
     # Legacy flags - kept for backwards compatibility
     parser.add_argument(
         "--fix-physical-params",
@@ -290,6 +300,7 @@ if __name__ == '__main__':
         overwrite=args.overwrite,
         initial_guess=args.initial_guess,
         fit_mode=args.fit_mode,
+        strict_convergence=args.strict_convergence,
         fix_physical_params=args.fix_physical_params,
         fix_lambda_sc=args.fix_lambda_sc
     )

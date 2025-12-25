@@ -978,6 +978,7 @@ class MultiSystemsFit:
     mask_edges: Optional[tuple] = None  # Tuple (start, end) for edge masking, or None for default
     check_gradient: bool = False
     print_to_std_out: bool = True
+    strict_convergence: bool = False  # if True, use very strict convergence (ftol=nan, gtol~0) - runs until 48h/numerical error
     # Fitting mode control - these are set by fit_mode but can also be set directly for backwards compatibility
     fix_physical_params: bool = False  # if True, the physical parameters are fixed
     fix_lambda_sc: bool = False  # if True, the lambda_sc parameters are fixed
@@ -1009,11 +1010,17 @@ class MultiSystemsFit:
             self.fix_lambda_sc = True
         elif self.fit_mode == 'lambda_only':
             self.fix_physical_params = True
-        # 'sequential' and 'all' modes are handled in fit()
+        # 'sequential' and 'simultaneous' modes are handled in fit()
         
-        # Validate that sequential mode requires infer_1D_sc
-        if self.fit_mode == 'sequential' and not self.infer_1D_sc:
-            raise ValueError("fit_mode='sequential' requires infer_1D_sc=True")
+        # Sequential mode will set infer_1D_sc=True internally for phase 2
+        # Store original setting to restore after sequential fitting
+        self._original_infer_1D_sc = self.infer_1D_sc
+        # For sequential mode, we always need lambda_sc in the final result
+        # Phase 1 runs without lambda_sc, Phase 2 adds them
+        if self.fit_mode == 'sequential':
+            # Start with infer_1D_sc=False for phase 1 (physical params only)
+            # This makes the optimization much faster
+            self.infer_1D_sc = False
         
         # Check for custom_mask usage - not yet supported with MultiSystemsFit
         if self.custom_mask is not None:
@@ -1081,6 +1088,27 @@ class MultiSystemsFit:
                 params_pos['lambda_sc'] = self.lambdas_indices[system.sys_name]
             system.dict_with_params_pos = params_pos
 
+    def _reinitialize_for_phase2(self):
+        """Reinitialize lambda_sc indices and param positions after switching infer_1D_sc to True.
+        
+        Called during sequential fitting when transitioning from Phase 1 (no lambda_sc) 
+        to Phase 2 (with lambda_sc). This updates the internal structures to include
+        lambda_sc parameters in the optimization vector.
+        """
+        # Update infer_1D_sc on each System's ExperimentFit instances
+        for system in self.systems:
+            system.infer_1D_sc = True
+            for exp_fit in system.exp_fits_all:
+                exp_fit.infer_1D_sc = True
+        
+        # Regenerate lambda indices now that infer_1D_sc=True
+        self.lambdas_indices = generate_lambdas_indices(self.systems, self.DMS_mode, self.infer_1D_sc)
+        
+        # Regenerate parameter positions to include lambda_sc
+        self._generate_params_positions()
+        
+        self.logger.debug(f"Reinitialized for phase 2: lambdas_indices = {self.lambdas_indices}")
+
     def write_log_file_header(self):
         with open(self.log_file_path,'w' if self.overwrite else 'a') as f:
             f.write(f'Date: {datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")}\n')
@@ -1104,6 +1132,7 @@ class MultiSystemsFit:
             f.write(f"Use interpolated pairing probabilities: {self.use_interpolated_ps}\n")
             f.write(f"Initial guess: {self.guess}\n")
             f.write(f"Max iterations: {self.max_iter}\n")
+            f.write(f"Strict convergence: {self.strict_convergence}\n")
             f.write(f"Custom mask: {self.custom_mask}\n")
             f.write(f"\n--- Execution Settings ---\n")
             f.write(f"Root directory: {self.root_dir}\n")
@@ -1243,40 +1272,57 @@ class MultiSystemsFit:
             return self._fit_single_phase()
     
     def _fit_sequential(self):
-        """Two-phase sequential fitting: physical params first, then lambda_sc."""
+        """Two-phase sequential fitting: physical params first, then lambda_sc.
+        
+        Phase 1: infer_1D_sc=False (no lambda_sc in optimization vector)
+                 This makes optimization much faster (fewer dimensions)
+        Phase 2: infer_1D_sc=True, fix_physical_params=True
+                 Physical params from phase 1 are fixed, only lambda_sc is optimized
+        """
         self.logger.info("=" * 60)
         self.logger.info("SEQUENTIAL FITTING MODE")
-        self.logger.info("Phase 1: Fitting physical parameters only")
+        self.logger.info("Phase 1: Fitting physical parameters only (no lambda_sc)")
         self.logger.info("=" * 60)
         
-        # Phase 1: Fit physical parameters only
-        self.fix_lambda_sc = True
+        # Phase 1: infer_1D_sc is already False (set in __post_init__ for sequential mode)
+        # Just fit physical parameters with smaller optimization problem
         self.fix_physical_params = False
+        self.fix_lambda_sc = False  # Not relevant since infer_1D_sc=False
         
         phase1_result = self._fit_single_phase(phase_name="Phase 1 (physical params)")
         
-        if phase1_result is None or not phase1_result.success:
+        if phase1_result is None or (hasattr(phase1_result, 'success') and not phase1_result.success):
             self.logger.warning("Phase 1 did not converge successfully, but continuing to Phase 2...")
         
         # Get the fitted physical parameters from phase 1
-        phase1_params = self.params_last_callback.copy()
+        # These are just the base params (mu_r, p_b, p_bind, m0, m1)
+        phase1_physical_params = self.params_last_callback.copy()
+        n_physical = len(phase1_physical_params)  # Should be 8 in DMS mode
         
         self.logger.info("")
         self.logger.info("=" * 60)
         self.logger.info("Phase 2: Fitting soft constraints (lambda_sc) with fixed physical params")
         self.logger.info("=" * 60)
         
-        # Phase 2: Fix physical params, fit lambda_sc
-        self.fix_lambda_sc = False
+        # Phase 2: Enable lambda_sc and reinitialize structures
+        self.infer_1D_sc = True
+        self._reinitialize_for_phase2()
+        
+        # Fix physical params, optimize lambda_sc
         self.fix_physical_params = True
+        self.fix_lambda_sc = False
         
         # Reset iteration count for phase 2
         self.iteration_count = 0
         
+        # Build phase 2 initial guess: phase 1 physical params + zeros for lambda_sc
+        n_lambda_total = sum(system.N_seq for system in self.systems)
+        phase2_initial = np.concatenate([phase1_physical_params, np.zeros(n_lambda_total)])
+        
         # Use phase 1 results as initial guess for phase 2
         phase2_result = self._fit_single_phase(
             phase_name="Phase 2 (lambda_sc)", 
-            initial_params=phase1_params
+            initial_params=phase2_initial
         )
         
         self.logger.info("")
@@ -1311,8 +1357,14 @@ class MultiSystemsFit:
         if len(bounds) != self.N_params_tot:
             raise ValueError(f'Expected {self.N_params_tot} bounds, got {len(bounds)}')
         
-        # Set stricter convergence criteria
-        options=dict(ftol=np.nan, gtol=np.sqrt(np.finfo(float).tiny))
+        # Set convergence criteria
+        if self.strict_convergence:
+            # Very strict: runs until 48h timeout, numerical error, or gradient truly zero
+            options = dict(ftol=np.nan, gtol=np.sqrt(np.finfo(float).tiny))
+            self.logger.info("Using STRICT convergence (will run until timeout/numerical limit)")
+        else:
+            # Scipy defaults: ftol=2.2e-9, gtol=1e-5 (reasonable for most cases)
+            options = {}
         if self.max_iter is not None:
             options['maxiter'] = self.max_iter
 
