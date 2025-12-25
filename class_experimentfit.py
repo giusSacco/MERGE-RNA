@@ -982,11 +982,11 @@ class MultiSystemsFit:
     fix_physical_params: bool = False  # if True, the physical parameters are fixed
     fix_lambda_sc: bool = False  # if True, the lambda_sc parameters are fixed
     # New: fit_mode controls the fitting strategy
-    # - 'all': fit all parameters together (default)
+    # - 'simultaneous': fit all parameters together
     # - 'physical_only': only fit physical parameters, keep lambda_sc fixed
     # - 'lambda_only': only fit lambda_sc, keep physical parameters fixed  
-    # - 'sequential': first fit physical params only, then fix them and fit lambda_sc
-    fit_mode: str = 'all'
+    # - 'sequential': first fit physical params only, then fix them and fit lambda_sc (default)
+    fit_mode: str = 'sequential'
     iteration_count: int = 0  # number of iterations
     use_interpolated_ps: bool = False  # whether to use interpolated pairing probabilities
     # These attributes are initialized in __post_init__
@@ -999,7 +999,7 @@ class MultiSystemsFit:
 
     def __post_init__(self):
         # Validate fit_mode
-        valid_modes = {'all', 'physical_only', 'lambda_only', 'sequential'}
+        valid_modes = {'simultaneous', 'physical_only', 'lambda_only', 'sequential'}
         if self.fit_mode not in valid_modes:
             raise ValueError(f"Invalid fit_mode '{self.fit_mode}'. Must be one of: {valid_modes}")
         
@@ -1232,10 +1232,10 @@ class MultiSystemsFit:
         """Run the optimization.
         
         The fitting strategy depends on self.fit_mode:
-        - 'all': Fit all parameters simultaneously (default)
+        - 'sequential': First fit physical params, then fix them and fit lambda_sc (default)
+        - 'simultaneous': Fit all parameters together
         - 'physical_only': Only fit physical parameters (mu_r, p_b, p_bind, m0, m1)
         - 'lambda_only': Only fit soft constraints (lambda_sc)
-        - 'sequential': First fit physical params, then fix them and fit lambda_sc
         """
         if self.fit_mode == 'sequential':
             return self._fit_sequential()

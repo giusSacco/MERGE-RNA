@@ -375,8 +375,8 @@ def main():
     fit_parser.add_argument('--suffix', type=str, help='Output subfolder name')
     fit_parser.add_argument('--infer-soft-constraints', '-sc', action='store_true', help='Infer position-specific soft constraints')
     fit_parser.add_argument('--fit-mode', type=str, default='sequential', 
-                           choices=['all', 'physical_only', 'lambda_only', 'sequential'],
-                           help='Fitting strategy: all (simultaneous), physical_only, lambda_only, or sequential (default, recommended)')
+                           choices=['simultaneous', 'physical_only', 'lambda_only', 'sequential'],
+                           help='Fitting strategy: simultaneous, physical_only, lambda_only, or sequential (default, recommended)')
     fit_parser.add_argument('--mask-edges', nargs=2, type=int, metavar=('START', 'END'), help='Mask first START and last END nucleotides')
     fit_parser.add_argument('--initial-guess', type=str, help='Initial guess: None, random, last, or path to params file')
     fit_parser.add_argument('--overwrite', action='store_true', help='Overwrite existing output')

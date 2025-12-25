@@ -262,9 +262,9 @@ if __name__ == '__main__':
     parser.add_argument(
         "--fit-mode",
         type=str,
-        choices=['all', 'physical_only', 'lambda_only', 'sequential'],
-        default='all',
-        help="Fitting strategy: all (simultaneous, default for backwards compat), physical_only, lambda_only, or sequential"
+        choices=['simultaneous', 'physical_only', 'lambda_only', 'sequential'],
+        default='sequential',
+        help="Fitting strategy: sequential (default), simultaneous, physical_only, or lambda_only"
     )
     # Legacy flags - kept for backwards compatibility
     parser.add_argument(
