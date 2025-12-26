@@ -758,29 +758,37 @@ class System:
         self.logger.debug(f'computed eps_b from 0 conc experiments: {eps_b[:10]}...')
         return eps_b
     
-    def plot_pairing_probs(self, mu_r, p_b, lambda_sc, save_fig_path=None, ax=None, fig=None, plot_no_lambda_case=True, plot_lambdas=True, xlim=None, **kwargs):
+    def plot_pairing_probs(self, mu_r, p_b, lambda_sc, save_fig_path=None, ax=None, fig=None, plot_lambdas=True, xlim=None, **kwargs):
         '''Plot the pairing probabilities for this system along the sequence.'''
         if ax is None:
             fig, ax = plt.subplots(1, 1, figsize=(15, 6))
-        # create a dictionary of exp_fit with unique concentrations
+        # create a dictionary of exp_fit with unique concentrations, sorted by concentration
         exp_fits_dict = {exp_fit.conc_mM: exp_fit for exp_fit in self.exp_fits_all}
-        # map colors linearly
-        colors = plt.cm.viridis(np.linspace(0, 1, len(exp_fits_dict)))
-        # plot inferred pairing probabilities
-        for exp_fit, color in zip(exp_fits_dict.values(), colors):
+        sorted_concs = sorted([c for c in exp_fits_dict.keys() if c is not None])
+        if None in exp_fits_dict:
+            sorted_concs.append(None)
+        # map colors linearly from 0mM (violet) to max concentration (yellow)
+        if len(sorted_concs) > 1:
+            max_conc = max(c for c in sorted_concs if c is not None)
+            colors = {conc: plt.cm.viridis(conc / max_conc if conc is not None else 0) for conc in sorted_concs}
+        else:
+            colors = {sorted_concs[0]: plt.cm.viridis(0.5)}
+        # plot baseline (no penalty, no lambda) once
+        first_exp_fit = exp_fits_dict[sorted_concs[0]]
+        indices = np.arange(self.N_seq)
+        if hasattr(first_exp_fit, 'df') and first_exp_fit.df is not None:
+            indices = first_exp_fit.df.index
+        pp_baseline = first_exp_fit.get_ps(0.0, np.zeros(self.N_seq) if lambda_sc is not None else None, interpolated=False)
+        ax.plot(indices, pp_baseline, label='baseline', linestyle=':', color='black', alpha=.6, linewidth=1.5)
+        # plot inferred pairing probabilities for each concentration
+        for conc in sorted_concs:
+            exp_fit = exp_fits_dict[conc]
+            color = colors[conc]
             mu_j = mu_r + self.kBT * np.log((exp_fit.conc_mM+.1)/1000) if exp_fit.conc_mM is not None else mu_r
-            ls = '-' 
             pp = exp_fit.get_ps(exp_fit.compute_penalty_m(mu_j, p_b), lambda_sc, interpolated=self.use_interpolated_ps)
-            indices = np.arange(self.N_seq)
-            if hasattr(exp_fit, 'df'):
-                if exp_fit.df is not None:
-                    indices = exp_fit.df.index
-            ax.plot(indices, pp, label=f'{exp_fit.conc_mM}mM', linestyle=ls, color=color)
-            pp_no_penalty = exp_fit.get_ps(0.0, lambda_sc, interpolated=self.use_interpolated_ps)
-            ax.plot(indices, pp_no_penalty, label=f'{exp_fit.conc_mM}mM no penalty no lambdas', linestyle='--', alpha=.5)
-            if plot_no_lambda_case and lambda_sc is not None:
-                pp_no_lambda = exp_fit.get_ps(exp_fit.compute_penalty_m(mu_j, p_b), np.zeros(self.N_seq), interpolated=self.use_interpolated_ps)
-                ax.plot(indices, pp_no_lambda, label=f'{exp_fit.conc_mM}mM no lambda', linestyle='-.')
+            if hasattr(exp_fit, 'df') and exp_fit.df is not None:
+                indices = exp_fit.df.index
+            ax.plot(indices, pp, label=f'{exp_fit.conc_mM}mM', linestyle='-', color=color)
         ax.set_title(self.sys_name)
         ax.set_xlabel('Position')
         ax.set_ylabel('Pairing probability')
@@ -802,22 +810,27 @@ class System:
         '''Plot the mutation profiles for this system.'''
         if ax is None:
             fig, ax = plt.subplots(1, 1, figsize=(15, 6))
-        # create a dictionary of exp_fit with unique concentrations
+        # create a dictionary of exp_fit with unique concentrations, sorted by concentration
         exp_fits_dict = {exp_fit.conc_mM: exp_fit for exp_fit in self.exp_fits_all}
-        # map lienarly colors
-        colors = plt.cm.viridis(np.linspace(0, 1, len(exp_fits_dict)))
+        sorted_concs = sorted([c for c in exp_fits_dict.keys() if c is not None])
+        if None in exp_fits_dict:
+            sorted_concs.append(None)
+        # map colors linearly from 0mM (violet) to max concentration (yellow)
+        if len(sorted_concs) > 1:
+            max_conc = max(c for c in sorted_concs if c is not None)
+            colors_dict = {conc: plt.cm.viridis(conc / max_conc if conc is not None else 0) for conc in sorted_concs}
+        else:
+            colors_dict = {sorted_concs[0]: plt.cm.viridis(0.5)}
         # plot inferred mutation profiles
-        for i,exp_fit in enumerate(exp_fits_dict.values()):
-            #ls = '-' if exp_fit.is_training else '--'
+        for conc in sorted_concs:
+            exp_fit = exp_fits_dict[conc]
+            color = colors_dict[conc]
             mut_rate_model, _ = exp_fit.mut_rate_and_its_grad(mu_r=mu_r, p_b=p_b, p_bind=p_bind, m0=m0, m1=m1, lambda_sc=lambda_sc, compute_gradient=False)
             indices = np.arange(self.N_seq)
-            if hasattr(exp_fit, 'df'):
-                if exp_fit.df is not None:
-                    indices = exp_fit.df.index
-            ax.plot(indices, mut_rate_model, label=f'model {exp_fit.conc_mM}mM rep{exp_fit.rep_number}', linestyle='-', color = colors[i])
+            if hasattr(exp_fit, 'df') and exp_fit.df is not None:
+                indices = exp_fit.df.index
+            ax.plot(indices, mut_rate_model, label=f'model {exp_fit.conc_mM}mM rep{exp_fit.rep_number}', linestyle='-', color=color)
         # plot exp data
-        # map concentrations to colors
-        colors_dict = {exp_fit.conc_mM: color for exp_fit, color in zip(exp_fits_dict.values(), colors)}
         for exp in self.exps_all:
             color = colors_dict[exp.conc_mM]
             # Get the position mask from any exp_fit (they should all have the same mask)
@@ -1362,6 +1375,7 @@ class MultiSystemsFit:
             # Very strict: runs until 48h timeout, numerical error, or gradient truly zero
             options = dict(ftol=np.nan, gtol=np.sqrt(np.finfo(float).tiny))
             self.logger.info("Using STRICT convergence (will run until timeout/numerical limit)")
+            self.logger.info("NOTE: Expect longer run times. Termination with 'ABNORMAL_TERMINATION_IN_LNSRCH' is normal and expected.")
         else:
             # Scipy defaults: ftol=2.2e-9, gtol=1e-5 (reasonable for most cases)
             options = {}
@@ -1394,6 +1408,9 @@ class MultiSystemsFit:
                 self.logger.exception(err_msg)
                 raise e
             finally:
+                # Print newline to move past the self-updating iteration counter
+                if self.print_to_std_out:
+                    print()  # newline after iteration counter
                 finished_msg = f'Finished fitting process of {self.systems[0].sys_name}{phase_str}, {datetime.datetime.now()}'
                 print(finished_msg)
                 self.logger.info(finished_msg)
@@ -1596,14 +1613,15 @@ class MultiSystemsFit:
             # Set lambda_sc gradient to zero if not inferring 1D soft constraints
             grad_tot[8 if self.DMS_mode else 12:] = 0
         
-        # create a subdirectory to store parameters at each call
-        os.makedirs(os.path.join(self.output_dir, 'params_at_calls'), exist_ok=True)
-        os.makedirs(os.path.join(self.output_dir, 'loss_at_calls'), exist_ok=True)
-        np.savetxt(os.path.join(self.output_dir, 'loss_at_calls', f'loss_call_{self.evaluation_count}.txt'), np.array([loss_train]))
-        np.savetxt(os.path.join(self.output_dir, 'params_at_calls', f'params_call_{self.evaluation_count}.txt'), params_1D)
-        if compute_gradient:
-            os.makedirs(os.path.join(self.output_dir, 'grad_at_calls'), exist_ok=True)
-            np.savetxt(os.path.join(self.output_dir, 'grad_at_calls', f'grad_call_{self.evaluation_count}.txt'), grad_tot)
+        # create subdirectories to store parameters at each call (debug mode only)
+        if self.debug:
+            os.makedirs(os.path.join(self.output_dir, 'params_at_calls'), exist_ok=True)
+            os.makedirs(os.path.join(self.output_dir, 'loss_at_calls'), exist_ok=True)
+            np.savetxt(os.path.join(self.output_dir, 'loss_at_calls', f'loss_call_{self.evaluation_count}.txt'), np.array([loss_train]))
+            np.savetxt(os.path.join(self.output_dir, 'params_at_calls', f'params_call_{self.evaluation_count}.txt'), params_1D)
+            if compute_gradient:
+                os.makedirs(os.path.join(self.output_dir, 'grad_at_calls'), exist_ok=True)
+                np.savetxt(os.path.join(self.output_dir, 'grad_at_calls', f'grad_call_{self.evaluation_count}.txt'), grad_tot)
         self.evaluation_count += 1
             
         return loss_train, grad_tot
@@ -1685,7 +1703,15 @@ class MultiSystemsFit:
             self.logger.info("24 hours elapsed; saving results before stopping optimization.")
             self.save_results()
             raise KeyboardInterrupt("Stopping optimization after 24 hours.")
-        self.logger.info(f'Callback n.{self.iteration_count} at {datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")} with losses: {self.losses_exp_fit}\n params: {list(params)}')
+        # Log losses to log file (info for first/last, debug otherwise)
+        if self.iteration_count <= 1 or last_callback:
+            self.logger.info(f'Callback n.{self.iteration_count} at {datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")} with losses: {self.losses_exp_fit}')
+        else:
+            self.logger.debug(f'Callback n.{self.iteration_count} at {datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")} with losses: {self.losses_exp_fit}')
+        self.logger.debug(f'params: {list(params)}')
+        # Print self-updating iteration counter to stdout (overwrite same line)
+        if self.print_to_std_out and not last_callback:
+            print(f'\rIteration: {self.iteration_count}', end='', flush=True)
         np.savetxt(os.path.join(self.output_dir, 'params1D.txt'), params)
         if not last_callback:
             # update params
@@ -1733,7 +1759,13 @@ class MultiSystemsFit:
                             plt.show()
                         else:
                             plt.close()
-                self.logger.info(f'Plots saved')
+                # Log plots saved: info level for first/last callback, debug otherwise
+                if self.iteration_count <= 1 or last_callback:
+                    self.logger.info(f'Plots saved')
+                else:
+                    if self.print_to_std_out:
+                        print(f'\rIteration: {self.iteration_count} - intermediate plots updated', end='', flush=True)
+                    self.logger.debug(f'Intermediate plots updated')
                 plt.close('all')
                 # update last callback time
                 self.last_plot_callback_time = datetime.datetime.now()

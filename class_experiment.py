@@ -799,3 +799,82 @@ def create_exp_synthetic_comb(pop1, params_dict = None, same_system = False, noi
     exp.df = df
     exp.raw_df = df.copy()
     return exp
+
+
+def create_synthetic_experiment(sequence, system_name='synthetic', conc_mM=100.0, temp_C=25.0, 
+                                 mask_edges=(0, 0), coverage=10000, seed=None):
+    """
+    Create a synthetic experiment with a random or specified RNA sequence.
+    
+    This is useful for demos and testing the fitting pipeline without real data.
+    
+    Parameters
+    ----------
+    sequence : str
+        RNA sequence (A, C, G, U characters)
+    system_name : str
+        Name for the system (used in output filenames)
+    conc_mM : float
+        DMS concentration in mM
+    temp_C : float
+        Temperature in Celsius
+    mask_edges : tuple
+        (left, right) number of positions to mask with NaN at sequence edges
+    coverage : int
+        Simulated read coverage per position
+    seed : int, optional
+        Random seed for reproducibility
+        
+    Returns
+    -------
+    Experiment
+        Experiment object with synthetic mutation data
+    """
+    import numpy as np
+    import pandas as pd
+    
+    if seed is not None:
+        np.random.seed(seed)
+    
+    seq_length = len(sequence)
+    
+    # Create basic experiment
+    exp = Experiment.__new__(Experiment)
+    exp.sequence = sequence
+    exp.system = system_name
+    exp.conc_mM = conc_mM
+    exp.temp_C = temp_C
+    exp.replicate = 1
+    exp.seq_length = seq_length
+    exp.pdb = None
+    
+    # Create dataframe with positions and nucleotides
+    df = pd.DataFrame({
+        'position': np.arange(1, seq_length + 1),
+        'nucleotide': list(sequence),
+        'total_count': coverage,
+        'mut_count': np.zeros(seq_length, dtype=int),
+        'wt_count': coverage * np.ones(seq_length, dtype=int),
+        'mut_rate': np.zeros(seq_length)
+    })
+    
+    exp.df = df
+    exp.raw_df = df.copy()
+    
+    # Generate synthetic data using the existing method
+    from class_experimentfit import ExperimentFit
+    exp_fit = ExperimentFit(exp)
+    
+    # Use default physical parameters to generate synthetic mutation rates
+    params_dict = exp_fit.default_params_dict.copy()
+    exp.df = exp_fit.generate_synthetic_data(params_dict=params_dict, coverage=coverage, noise=True)
+    
+    # Apply edge masking
+    left_mask, right_mask = mask_edges
+    if left_mask > 0:
+        exp.df.loc[:left_mask - 1, 'mut_rate'] = np.nan
+    if right_mask > 0:
+        exp.df.loc[seq_length - right_mask:, 'mut_rate'] = np.nan
+    
+    exp.raw_df = exp.df.copy()
+    return exp
