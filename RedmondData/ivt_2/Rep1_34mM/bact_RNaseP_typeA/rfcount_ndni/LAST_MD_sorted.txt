@@ -1,0 +1,12 @@
+### Chemical probing experiment
+ID:	26e6514d-57ab-49e8-b4e4-411a39528e62
+Description:	bact_RNaseP_typeA 34mM r1
+Short description:	bact_RNaseP_typeA 34mM r1
+Path to rc data:	$RNA_STRUCT_HOME/RedmondData/ivt_2/Rep1_34mM/bact_RNaseP_typeA/rfcount_ndni/LAST_MD_sorted.rc
+Reagent:	DMS
+Concentration:	34
+SRR:	None
+Path to full reference fasta:	None
+Temperature:	37
+system:	bact_RNaseP_typeA
+Rep number:	1

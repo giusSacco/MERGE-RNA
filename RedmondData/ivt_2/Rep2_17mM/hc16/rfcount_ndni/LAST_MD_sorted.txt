@@ -1,0 +1,12 @@
+### Chemical probing experiment
+ID:	4d0573fa-8c54-4058-a36e-66baa5e1abe1
+Description:	hc16 17mM r2
+Short description:	hc16 17mM r2
+Path to rc data:	$RNA_STRUCT_HOME/RedmondData/ivt_2/Rep2_17mM/hc16/rfcount_ndni/LAST_MD_sorted.rc
+Reagent:	DMS
+Concentration:	17
+SRR:	None
+Path to full reference fasta:	None
+Temperature:	37
+system:	hc16
+Rep number:	2

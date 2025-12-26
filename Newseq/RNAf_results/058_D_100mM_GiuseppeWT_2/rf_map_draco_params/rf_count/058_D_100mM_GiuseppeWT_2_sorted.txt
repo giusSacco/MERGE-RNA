@@ -6,7 +6,7 @@ Path to rc data:	$RNA_STRUCT_HOME/Newseq/RNAf_results/058_D_100mM_GiuseppeWT_2/r
 Reagent:	DMS
 Concentration:	100
 SRR:	058_D_100mM_GiuseppeWT_2
-Path to full reference fasta:	/Users/giuseppesacco/uni/unified-rna-struct/Newseq/reference.fa
+Path to full reference fasta:	/Users/giuseppesacco/uni/MERGE-RNA/Newseq/reference.fa
 Temperature:	37
 system:	NewseqWT
 Rep number:	2

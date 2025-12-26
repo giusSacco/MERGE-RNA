@@ -1,0 +1,12 @@
+### Chemical probing experiment
+ID:	3a03f2a0-e507-41f8-8c66-e81e8282d92a
+Description:	GSM2946867: DMS-MaPSeq of purified cspA mRNA at 10°C, rep 4; Escherichia coli str. K-12 substr. MG1655; OTHER (SRR6507968)
+Short description:	 cspA mRNA at 10°C, rep 4
+Path to rc data:	$RNA_STRUCT_HOME/data_validation_draco/SRR6507968/rf_map_draco_params_170_nt/rf_count/SRR6507968_sorted.rc
+Reagent:	DMS
+Concentration:	None
+SRR:	SRR6507968
+Path to full reference fasta:	$RNA_STRUCT_HOME/data_validation_draco/cspA_171_nt.fa
+Temperature:	10
+system:	cspA_10C
+Rep number:	4

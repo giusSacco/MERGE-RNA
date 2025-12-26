@@ -1,0 +1,12 @@
+### Chemical probing experiment
+ID:	36da4f48-586f-4d4b-bce3-891b6c25e49e
+Description:	V_chol_gly_riboswitch 85mM r1
+Short description:	V_chol_gly_riboswitch 85mM r1
+Path to rc data:	$RNA_STRUCT_HOME/RedmondData/ivt_2/Rep1_85mM/V_chol_gly_riboswitch/rfcount_ndni/LAST_MD_sorted.rc
+Reagent:	DMS
+Concentration:	85
+SRR:	None
+Path to full reference fasta:	None
+Temperature:	37
+system:	V_chol_gly_riboswitch
+Rep number:	1

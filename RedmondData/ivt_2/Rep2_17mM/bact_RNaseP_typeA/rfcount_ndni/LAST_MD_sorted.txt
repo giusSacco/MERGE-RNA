@@ -1,0 +1,12 @@
+### Chemical probing experiment
+ID:	d2152610-f3d1-4428-a62b-9c24e6c95d7c
+Description:	bact_RNaseP_typeA 17mM r2
+Short description:	bact_RNaseP_typeA 17mM r2
+Path to rc data:	$RNA_STRUCT_HOME/RedmondData/ivt_2/Rep2_17mM/bact_RNaseP_typeA/rfcount_ndni/LAST_MD_sorted.rc
+Reagent:	DMS
+Concentration:	17
+SRR:	None
+Path to full reference fasta:	None
+Temperature:	37
+system:	bact_RNaseP_typeA
+Rep number:	2

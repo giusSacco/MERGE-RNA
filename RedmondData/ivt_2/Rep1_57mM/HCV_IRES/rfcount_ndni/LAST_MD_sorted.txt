@@ -1,0 +1,12 @@
+### Chemical probing experiment
+ID:	b4e698eb-24eb-4b6d-926d-4208277b86b8
+Description:	HCV_IRES 57mM r1
+Short description:	HCV_IRES 57mM r1
+Path to rc data:	$RNA_STRUCT_HOME/RedmondData/ivt_2/Rep1_57mM/HCV_IRES/rfcount_ndni/LAST_MD_sorted.rc
+Reagent:	DMS
+Concentration:	57
+SRR:	None
+Path to full reference fasta:	None
+Temperature:	37
+system:	HCV_IRES
+Rep number:	1

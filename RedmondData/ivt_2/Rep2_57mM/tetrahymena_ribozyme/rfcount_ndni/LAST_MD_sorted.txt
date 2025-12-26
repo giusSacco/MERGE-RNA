@@ -1,0 +1,12 @@
+### Chemical probing experiment
+ID:	8fde8e74-0805-4be6-b441-7a7c140a25b7
+Description:	tetrahymena_ribozyme 57mM r2
+Short description:	tetrahymena_ribozyme 57mM r2
+Path to rc data:	$RNA_STRUCT_HOME/RedmondData/ivt_2/Rep2_57mM/tetrahymena_ribozyme/rfcount_ndni/LAST_MD_sorted.rc
+Reagent:	DMS
+Concentration:	57
+SRR:	None
+Path to full reference fasta:	None
+Temperature:	37
+system:	tetrahymena_ribozyme
+Rep number:	2
