@@ -384,3 +384,6 @@ Newseq/RNAf_results/058_D_80mM_GiuseppeWT_2/rf_map_draco_params/rf_count/058_D_8
 Newseq/RNAf_results/058_E_GiuseppeWT_1/rf_map_draco_params/rf_count/058_E_GiuseppeWT_1_sorted.txt
 Newseq/RNAf_results/058_E_GiuseppeWT_2/rf_map_draco_params/rf_count/058_E_GiuseppeWT_2_sorted.txt
 synch_remote.py
+
+# google drive temp files
+.tmp.driveupload
