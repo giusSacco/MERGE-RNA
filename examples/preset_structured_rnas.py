@@ -24,7 +24,7 @@ from class_experimentfit import MultiSystemsFit
 # =============================================================================
 # Configuration
 # =============================================================================
-OUTPUT_DIR = 'preset_structured_rnas'
+OUTPUT_DIR = os.path.join('examples', 'outputs', 'preset_structured_rnas')
 VALIDATION_SYSTEMS = ['hc16', 'bact_RNaseP_typeA']
 
 # =============================================================================

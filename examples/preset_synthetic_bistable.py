@@ -22,7 +22,7 @@ from class_experimentfit import MultiSystemsFit
 # =============================================================================
 # Configuration
 # =============================================================================
-OUTPUT_DIR = 'preset_synthetic_bistable'
+OUTPUT_DIR = os.path.join('examples', 'outputs', 'preset_synthetic_bistable')
 POP1_VALUES = [0.0, 0.2, 0.4, 0.6, 0.8, 1.0]  # fraction of population 1
 
 # =============================================================================
@@ -35,7 +35,7 @@ for pop1 in POP1_VALUES:
     
     exp = create_exp_synthetic_comb(pop1=pop1, same_system=False)
     
-    print(f"  Sequence length: {exp.seq_length}")
+    print(f"  Sequence length: {exp.N_seq}")
     print(f"  Temperature: {exp.temp_C}°C")
     
     multi_sys = MultiSystemsFit(

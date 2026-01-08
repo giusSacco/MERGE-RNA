@@ -22,7 +22,7 @@ from class_experimentfit import MultiSystemsFit
 # =============================================================================
 # Configuration
 # =============================================================================
-OUTPUT_DIR = 'preset_experimental_bistable_andronescu'
+OUTPUT_DIR = os.path.join('examples', 'outputs', 'preset_experimental_bistable_andronescu')
 
 # Load Andronescu (2007) parameters BEFORE creating experiments
 RNA.params_load_RNA_Andronescu2007()

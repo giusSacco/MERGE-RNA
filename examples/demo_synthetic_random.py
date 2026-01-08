@@ -25,7 +25,7 @@ from class_experimentfit import ExperimentFit, System, MultiSystemsFit
 # =============================================================================
 # Configuration
 # =============================================================================
-OUTPUT_DIR = 'demo_synthetic_random'
+OUTPUT_DIR = os.path.join('examples', 'outputs', 'demo_synthetic_random')
 SEQUENCE_LENGTH = 30
 RANDOM_SEED = 42
 MASK_EDGES = (5, 5)  # NaN at first/last 5 positions
@@ -42,32 +42,48 @@ print(f"Generated sequence: {sequence}")
 # =============================================================================
 import pandas as pd
 
-# Create experiment object
-exp = Experiment.__new__(Experiment)
-exp.sequence = sequence
-exp.system = f'random_{SEQUENCE_LENGTH}nt'
-exp.conc_mM = 100.0
-exp.temp_C = 25.0
-exp.replicate = 1
-exp.seq_length = SEQUENCE_LENGTH
-exp.pdb = None
+# Create experiment object using proper Experiment constructor
+exp = Experiment(None, seq=sequence, system_name=f'random_{SEQUENCE_LENGTH}nt', 
+                 conc_mM=100.0, temp_C=25.0, rep_number=1)
 
 # Create dataframe
 coverage = 10000
 exp.df = pd.DataFrame({
-    'position': np.arange(1, SEQUENCE_LENGTH + 1),
-    'nucleotide': list(sequence),
+    'pos': np.arange(1, SEQUENCE_LENGTH + 1),
+    'ref_nt': list(sequence),
     'total_count': coverage,
     'mut_count': np.zeros(SEQUENCE_LENGTH, dtype=int),
     'wt_count': coverage * np.ones(SEQUENCE_LENGTH, dtype=int),
-    'mut_rate': np.zeros(SEQUENCE_LENGTH)
+    'mut_rate': np.zeros(SEQUENCE_LENGTH),
+    'Sample': f'random_{SEQUENCE_LENGTH}nt'
 })
 exp.raw_df = exp.df.copy()
 
 # Generate synthetic data
-exp_fit = ExperimentFit(exp)
-params_dict = exp_fit.default_params_dict.copy()
-exp.df = exp_fit.generate_synthetic_data(params_dict=params_dict, coverage=coverage, noise=True)
+eps_b = np.zeros(SEQUENCE_LENGTH)  # No background for synthetic data
+
+# Create default params_dict for synthetic data generation
+# These are typical values for DMS probing
+params_dict = {
+    'mu_r': 0.5,      # chemical potential
+    'p_b': 1.0,       # penalty for paired bases  
+    'p_bind': {       # binding probabilities per nucleotide type and pairing state
+        (0, 'A'): 0.3,  # unpaired A
+        (0, 'C'): 0.3,  # unpaired C
+        (0, 'G'): 0.05, # unpaired G
+        (0, 'U'): 0.05, # unpaired U
+        (1, 'A'): 0.0,  # paired A (DMS doesn't react with paired A)
+        (1, 'C'): 0.0,  # paired C (DMS doesn't react with paired C)
+        (1, 'G'): 0.05, # paired G
+        (1, 'U'): 0.05, # paired U
+    },
+    'm0': 0.001,
+    'm1': 1.0,
+    'lambda_sc': np.zeros(SEQUENCE_LENGTH),  # soft constraints (none initially)
+}
+
+# Generate synthetic mutation data using Experiment's method
+exp.df = exp.generate_synthetic_data(params_dict=params_dict, coverage=coverage, noise=True, eps_b=eps_b)
 
 # Apply edge masking
 left_mask, right_mask = MASK_EDGES

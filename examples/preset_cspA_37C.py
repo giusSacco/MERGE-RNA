@@ -19,7 +19,7 @@ from class_experimentfit import MultiSystemsFit
 # =============================================================================
 # Configuration
 # =============================================================================
-OUTPUT_DIR = 'preset_cspA_37C'
+OUTPUT_DIR = os.path.join('examples', 'outputs', 'preset_cspA_37C')
 
 # =============================================================================
 # Load experiments
@@ -28,7 +28,7 @@ experiments = [Experiment(path) for path in Experiment.paths_to_cspa_37C_data_tx
 
 print(f"Loaded {len(experiments)} cspA 37°C experiments:")
 for exp in experiments:
-    print(f"  - {exp.system} @ {exp.conc_mM}mM, {exp.temp_C}°C, rep {exp.replicate}")
+    print(f"  - {exp.system_name} @ {exp.conc_mM}mM, {exp.temp_C}°C, rep {exp.rep_number}")
 
 # =============================================================================
 # Run fit

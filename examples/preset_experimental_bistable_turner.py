@@ -21,7 +21,7 @@ from class_experimentfit import MultiSystemsFit
 # =============================================================================
 # Configuration
 # =============================================================================
-OUTPUT_DIR = 'preset_experimental_bistable_turner'
+OUTPUT_DIR = os.path.join('examples', 'outputs', 'preset_experimental_bistable_turner')
 
 # =============================================================================
 # Load experiments
