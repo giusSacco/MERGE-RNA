@@ -43,8 +43,9 @@ print(f"Generated sequence: {sequence}")
 import pandas as pd
 
 # Create experiment object using proper Experiment constructor
-exp = Experiment(None, seq=sequence, system_name=f'random_{SEQUENCE_LENGTH}nt', 
-                 conc_mM=100.0, temp_C=25.0, rep_number=1)
+# Note: rep_number not specified for synthetic data to avoid initialization issues
+exp = Experiment(None, seq=sequence, system_name=f'random_{SEQUENCE_LENGTH}nt',
+                 conc_mM=100.0, temp_C=25.0)
 
 # Create dataframe
 coverage = 10000
@@ -107,7 +108,8 @@ multi_sys = MultiSystemsFit(
     mask_edges=MASK_EDGES,
     fit_mode='sequential',
     do_plots=True,
-    print_to_std_out=True
+    print_to_std_out=True,
+    overwrite=True  # Archive old outputs automatically
 )
 
 result = multi_sys.fit()

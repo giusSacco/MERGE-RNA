@@ -420,6 +420,53 @@ class ExperimentFit(Experiment):
         else:
             return self._cached_pairing_probs['pairing_probs']
 
+    def get_bpp_matrix(self, penalty, lambda_sc=None):
+        """Return the full N x N base pair probability matrix."""
+        fold_compound = RNA.fold_compound(self.seq)
+        RNA.cvar.temperature = self.temp_C
+        self.apply_penalty_for_paired_bases(penalty, fold_compound)
+        if lambda_sc is not None:
+            self.apply_soft_constraints(lambda_sc, fold_compound)
+        fold_compound.pf()
+        bpp = np.array(fold_compound.bpp())[1:, 1:]
+        return bpp
+
+    def generate_comparative_arcplot(self, mu_r, p_b, lambda_sc, save_path):
+        """Generate comparative arcplot for this experiment."""
+        penalty = self.compute_penalty_m(mu_r, p_b)
+
+        bpp_original = self.get_bpp_matrix(penalty, lambda_sc=None)
+        bpp_with_lambdas = self.get_bpp_matrix(penalty, lambda_sc=lambda_sc)
+
+        render_comparative_arcplot(
+            sequence=self.seq,
+            bpp_original=bpp_original,
+            bpp_with_lambdas=bpp_with_lambdas,
+            lambda_sc=lambda_sc,
+            save_path=save_path,
+            system_name=f"{self.system_name} ({self.conc_mM}mM)" if self.conc_mM is not None else self.system_name
+        )
+
+    def save_pairing_probabilities(self, mu_r, p_b, lambda_sc, output_dir):
+        """Save pairing probabilities to text files."""
+        penalty = self.compute_penalty_m(mu_r, p_b)
+
+        # Get full BPP matrix with lambda_sc
+        bpp_matrix = self.get_bpp_matrix(penalty, lambda_sc=lambda_sc)
+
+        # Get pairing probabilities (use interpolated if enabled)
+        pairing_probs = self.get_ps(penalty, lambda_sc, interpolated=self.use_interpolated_ps)
+
+        # Save full BPP matrix
+        bpp_path = os.path.join(output_dir, 'base_pairing_probabilities.txt')
+        np.savetxt(bpp_path, bpp_matrix, fmt='%.6f',
+                   header=f'Base pairing probability matrix for {self.system_name}\nRows and columns: positions 1 to {len(self.seq)}')
+
+        # Save 1D pairing probabilities
+        pp_path = os.path.join(output_dir, 'pairing_probs.txt')
+        np.savetxt(pp_path, pairing_probs, fmt='%.6f',
+                   header=f'Pairing probabilities for {self.system_name}\nPosition-wise probability of being paired')
+
     def get_dps_dlambda_sc(self, penalty, lambda_sc, interpolated):
         if not self.infer_1D_sc:
             return None 
@@ -682,6 +729,69 @@ def generate_lambdas_indices(systems, DMS_mode, infer_1D_sc):
         lambdas_indices[system.sys_name] = list(range(last_index + 1, last_index + 1 + system.N_seq))
         last_index = lambdas_indices[system.sys_name][-1]
     return lambdas_indices
+
+def render_comparative_arcplot(
+    sequence, bpp_original, bpp_with_lambdas, lambda_sc, save_path, threshold=0.05, system_name=""
+):
+    """
+    Generate comparative arc plot: BPP with lambdas (top) vs without (bottom).
+    Follows the same pattern as maintext_figs.ipynb arcplots.
+    """
+    from matplotlib.patches import Arc
+    from matplotlib.lines import Line2D
+
+    n = len(sequence)
+    max_linewidth = 2.0
+    arc_height_ratio = 0.8
+
+    fig, ax = plt.subplots(figsize=(max(12, n * 0.08), 6), dpi=150)
+
+    # Baseline
+    ax.plot([-1, n], [0, 0], 'k-', linewidth=1.0)
+
+    # Upper arcs: BPP with lambdas (model-fitted)
+    for i in range(n):
+        for j in range(i + 1, n):
+            prob = bpp_with_lambdas[i, j]
+            if prob > threshold:
+                cx = (i + j) / 2.0
+                w = j - i
+                h = w * arc_height_ratio
+                lw = max_linewidth * prob
+                arc = Arc((cx, 0), w, h, theta1=0, theta2=180,
+                         edgecolor='steelblue', linewidth=lw, fill=False, alpha=0.8)
+                ax.add_patch(arc)
+
+    # Lower arcs: BPP without lambdas (original Vienna)
+    for i in range(n):
+        for j in range(i + 1, n):
+            prob = bpp_original[i, j]
+            if prob > threshold:
+                cx = (i + j) / 2.0
+                w = j - i
+                h = w * arc_height_ratio
+                lw = max_linewidth * prob
+                arc = Arc((cx, 0), w, h, theta1=180, theta2=360,
+                         edgecolor='gray', linewidth=lw, fill=False, alpha=0.7)
+                ax.add_patch(arc)
+
+    ax.set_ylim(-n/2, n/2)
+    ax.set_xlim(-1, n + 1)
+    ax.set_xlabel("Position (nt)")
+    ax.set_title(f"{system_name}: BPP Comparison")
+    ax.set_yticks([])
+    ax.grid(axis='x', linestyle='--', alpha=0.7)
+
+    # Legend
+    legend_elements = [
+        Line2D([0], [0], color='steelblue', lw=2, label='With soft constraints (top)'),
+        Line2D([0], [0], color='gray', lw=2, label='Without soft constraints (bottom)'),
+    ]
+    ax.legend(handles=legend_elements, loc='upper right', fontsize=8)
+
+    plt.tight_layout()
+    plt.savefig(save_path, dpi=150, bbox_inches='tight')
+    plt.close()
 
 class System:
     '''Collect multiple experiments from the same system (different concentrations or replicas) and initialize the ExperimentFit instances.
@@ -969,6 +1079,54 @@ class System:
         else:
             plt.close()
 
+    def generate_comparative_arcplot(self, mu_r, p_b, lambda_sc, save_path):
+        """
+        Generate comparative arcplot for this system.
+        Uses zero-concentration experiment if available, otherwise uses first experiment.
+        """
+        # Try to find zero concentration experiment first
+        exp_fit = None
+        for ef in self.exp_fits_all:
+            if ef.conc_mM == 0:
+                exp_fit = ef
+                break
+
+        # If no zero concentration, use first available experiment
+        if exp_fit is None:
+            exp_fit = self.exp_fits_train[0] if self.exp_fits_train else self.exp_fits_all[0]
+
+        # Delegate to ExperimentFit method
+        exp_fit.generate_comparative_arcplot(mu_r, p_b, lambda_sc, save_path)
+
+    def save_pairing_probabilities(self, mu_r, p_b, lambda_sc, output_dir):
+        """
+        Save pairing probabilities to text files.
+        Uses zero-concentration experiment if available, otherwise uses first experiment.
+        """
+        # Try to find zero concentration experiment first
+        exp_fit = None
+        for ef in self.exp_fits_all:
+            if ef.conc_mM == 0:
+                exp_fit = ef
+                break
+
+        # If no zero concentration, use first available experiment
+        if exp_fit is None:
+            exp_fit = self.exp_fits_train[0] if self.exp_fits_train else self.exp_fits_all[0]
+
+        # Delegate to ExperimentFit method
+        exp_fit.save_pairing_probabilities(mu_r, p_b, lambda_sc, output_dir)
+
+    def save_lambda_sc(self, lambda_sc, output_dir):
+        """Save lambda_sc soft constraints to text file."""
+        if lambda_sc is not None:
+            lambda_path = os.path.join(output_dir, f'{self.sys_name}_lambda_sc.txt')
+            np.savetxt(lambda_path, lambda_sc, fmt='%.6f',
+                      header=f'Soft constraints (lambda_sc) for {self.sys_name}\nPosition-wise constraint values')
+        else:
+            # No lambda_sc to save
+            pass
+
 
 
 # create a class that takes as input multiple experiments (different systems) and combines them into a single fitting process
@@ -1045,27 +1203,116 @@ class MultiSystemsFit:
                 "or use individual System/ExperimentFit classes directly for custom masking."
             )
         
-        # Create output directory
-        self.output_dir = os.path.join(self.root_dir, self.output_suffix)
+        # Handle existing output directory and get final path
+        self.output_dir = self._handle_existing_output_dir()
         os.makedirs(self.output_dir, exist_ok=True)
-        self.log_file_path = os.path.join(self.output_dir, f'{self.output_suffix}.log')
-        if self.overwrite:
-            os.remove(self.log_file_path) if os.path.exists(self.log_file_path) else None
-        # Initialize logger using a unique name per instance
-        unique_logger_name = f"{self.output_suffix}_{os.getpid()}"
-        self.logger = initialize_logger(unique_logger_name, self.log_file_path, self.debug, self.print_to_std_out)
-        self.logger.debug(f'Initialized logger with log file: {self.log_file_path}')
+        self.output_paths = self._ensure_output_dirs()
+
+        # Setup both detailed and summary loggers
+        self.logger, self.summary_logger, self.log_file_path, self.summary_log_path = self._setup_loggers()
+        self.logger.debug(f'Initialized detailed logger: {self.log_file_path}')
+        self.logger.debug(f'Initialized summary logger: {self.summary_log_path}')
         # Initialize systems via grouping experiments
         self.systems = self._initialize_systems(self.experiments, self.validation_exps)
         # Generate lambda_sc indices for optimization if needed
         self.lambdas_indices = generate_lambdas_indices(self.systems, self.DMS_mode, self.infer_1D_sc)
         # Set parameter positions for each system
         self._generate_params_positions()
-        # Write the log file header
+        # Write the log file headers
         self.write_log_file_header()
+        self.write_summary_log_header()
         self.last_plot_callback_time = None
         self.evaluation_count = 0
         self.params_history = {'mu_r': [], 'p_b': [], 'p_bind': {key: [] for key in [(0, 'A'), (0, 'C'), (0, 'G'), (0, 'U'), (1, 'A'), (1, 'C'), (1, 'G'), (1, 'U')]}, 'm0': [], 'm1': []}
+        self.current_phase = None  # For sequential mode: 1 = physical params, 2 = lambda_sc
+
+    def _handle_existing_output_dir(self):
+        """
+        Check if output directory exists and handle conflicts.
+        Returns the final output_dir path to use.
+        """
+        import shutil
+
+        proposed_dir = os.path.join(self.root_dir, self.output_suffix)
+
+        # If directory doesn't exist or overwrite is True, proceed
+        if not os.path.exists(proposed_dir):
+            return proposed_dir
+
+        if self.overwrite:
+            # Archive old directory and proceed
+            timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+            archive_name = f"{self.output_suffix}_archived_{timestamp}"
+            archive_path = os.path.join(self.root_dir, '_archive', archive_name)
+            os.makedirs(os.path.join(self.root_dir, '_archive'), exist_ok=True)
+            shutil.move(proposed_dir, archive_path)
+            print(f"Archived previous output to: {archive_path}")
+            return proposed_dir
+
+        # Directory exists and overwrite is False - prompt user
+        print(f"\n{'='*60}")
+        print(f"Output directory already exists: {proposed_dir}")
+        print(f"{'='*60}")
+        print("Choose an action:")
+        print("  [o] Overwrite (archive old folder to _archive/)")
+        print("  [n] Use new folder name (add timestamp suffix)")
+        print("  [c] Cancel and exit")
+        print(f"{'='*60}")
+
+        while True:
+            choice = input("Your choice [o/n/c]: ").strip().lower()
+
+            if choice == 'o':
+                # Archive and overwrite
+                timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+                archive_name = f"{self.output_suffix}_archived_{timestamp}"
+                archive_path = os.path.join(self.root_dir, '_archive', archive_name)
+                os.makedirs(os.path.join(self.root_dir, '_archive'), exist_ok=True)
+                shutil.move(proposed_dir, archive_path)
+                print(f"✓ Archived previous output to: {archive_path}")
+                return proposed_dir
+
+            elif choice == 'n':
+                # Create new folder with timestamp suffix
+                timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+                new_suffix = f"{self.output_suffix}_{timestamp}"
+                new_dir = os.path.join(self.root_dir, new_suffix)
+                print(f"✓ Using new folder: {new_dir}")
+                # Update the output_suffix to match
+                self.output_suffix = new_suffix
+                return new_dir
+
+            elif choice == 'c':
+                print("✗ Cancelled by user")
+                raise KeyboardInterrupt("User cancelled due to existing output directory")
+
+            else:
+                print("Invalid choice. Please enter 'o', 'n', or 'c'.")
+
+    def _ensure_output_dirs(self):
+        """Create and return paths to output subdirectories."""
+        dirs = {
+            'root': self.output_dir,
+            'detailed': os.path.join(self.output_dir, 'detailed'),
+            'plots': os.path.join(self.output_dir, 'plots'),
+        }
+        for d in dirs.values():
+            os.makedirs(d, exist_ok=True)
+        return dirs
+
+    def _setup_loggers(self):
+        """Setup both detailed and summary loggers."""
+        # Detailed logger (existing behavior)
+        detailed_log_path = os.path.join(self.output_paths['detailed'], f'{self.output_suffix}.log')
+        unique_logger_name = f"{self.output_suffix}_{os.getpid()}"
+        detailed_logger = initialize_logger(unique_logger_name, detailed_log_path, self.debug, self.print_to_std_out)
+
+        # Summary logger (new simplified log in main folder)
+        summary_log_path = os.path.join(self.output_dir, 'summary.log')
+        summary_logger_name = f"{self.output_suffix}_summary_{os.getpid()}"
+        summary_logger = initialize_logger(summary_logger_name, summary_log_path, debug=False, print_to_std_out=False)
+
+        return detailed_logger, summary_logger, detailed_log_path, summary_log_path
 
     def _initialize_systems(self, experiments, validation_exps):
         '''Generate useful dictionaries that map experiment IDs to Experiment and ExperimentFit instances.'''
@@ -1122,8 +1369,25 @@ class MultiSystemsFit:
         
         self.logger.debug(f"Reinitialized for phase 2: lambdas_indices = {self.lambdas_indices}")
 
+    def write_summary_log_header(self):
+        """Write a simplified configuration summary to the summary log."""
+        with open(self.summary_log_path, 'w') as f:
+            f.write(f"MERGE-RNA Fit Summary\n")
+            f.write(f"{'='*60}\n")
+            f.write(f"Date: {datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
+            f.write(f"System(s): {', '.join(s.sys_name for s in self.systems)}\n")
+            f.write(f"Output: {self.output_dir}\n")
+            f.write(f"\nConfiguration:\n")
+            f.write(f"  Fit mode: {self.fit_mode}\n")
+            f.write(f"  DMS mode: {self.DMS_mode}\n")
+            f.write(f"  Infer soft constraints: {self.infer_1D_sc}\n")
+            f.write(f"  Max iterations: {self.max_iter}\n")
+            f.write(f"  Strict convergence: {self.strict_convergence}\n")
+            f.write(f"{'='*60}\n\n")
+
     def write_log_file_header(self):
-        with open(self.log_file_path,'w' if self.overwrite else 'a') as f:
+        # Always write in 'w' mode since directory conflicts are handled in _handle_existing_output_dir
+        with open(self.log_file_path, 'w') as f:
             f.write(f'Date: {datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")}\n')
             f.write(f'ViennaRNA version: {RNA.__version__}\n')
             f.write(f'Description: {self.description}\n')
@@ -1296,35 +1560,82 @@ class MultiSystemsFit:
         self.logger.info("SEQUENTIAL FITTING MODE")
         self.logger.info("Phase 1: Fitting physical parameters only (no lambda_sc)")
         self.logger.info("=" * 60)
-        
+
+        # Write to summary log
+        with open(self.summary_log_path, 'a') as f:
+            f.write(f"\n{'='*60}\n")
+            f.write(f"Phase 1: Fitting physical parameters\n")
+            f.write(f"{'='*60}\n\n")
+
         # Phase 1: infer_1D_sc is already False (set in __post_init__ for sequential mode)
         # Just fit physical parameters with smaller optimization problem
         self.fix_physical_params = False
         self.fix_lambda_sc = False  # Not relevant since infer_1D_sc=False
-        
+
+        # Mark that we're in phase 1 for callback handling
+        self.current_phase = 1
+
         phase1_result = self._fit_single_phase(phase_name="Phase 1 (physical params)")
-        
+
         if phase1_result is None or (hasattr(phase1_result, 'success') and not phase1_result.success):
             self.logger.warning("Phase 1 did not converge successfully, but continuing to Phase 2...")
-        
+
         # Get the fitted physical parameters from phase 1
         # These are just the base params (mu_r, p_b, p_bind, m0, m1)
         phase1_physical_params = self.params_last_callback.copy()
         n_physical = len(phase1_physical_params)  # Should be 8 in DMS mode
-        
+
+        # Write Phase 1 results to summary log (physical params including p_bind)
+        params_dict = self.pack_params(phase1_physical_params, self.systems[0])
+        with open(self.summary_log_path, 'a') as f:
+            f.write(f"\nFitted physical parameters:\n")
+            f.write(f"  mu_r = {params_dict['mu_r']:.4f}\n")
+            f.write(f"  p_b  = {params_dict['p_b']:.4f}\n")
+            f.write(f"  m0   = {params_dict['m0']:.6f}\n")
+            f.write(f"  m1   = {params_dict['m1']:.4f}\n")
+            f.write(f"\n  Binding probabilities (p_bind):\n")
+            f.write(f"           Unpaired    Paired\n")
+            for nt in ['A', 'C', 'G', 'U']:
+                unpaired = params_dict['p_bind'].get((0, nt), 0)
+                paired = params_dict['p_bind'].get((1, nt), 0)
+                f.write(f"    {nt}      {unpaired:8.4f}    {paired:8.4f}\n")
+
+            # Add convergence info for Phase 1
+            f.write(f"\nConvergence:\n")
+            if phase1_result is not None and hasattr(phase1_result, 'message'):
+                status_msg = phase1_result.message.strip()
+                f.write(f"  Status: {status_msg}\n")
+                # Explain ABNORMAL termination
+                if 'ABNORMAL' in status_msg.upper():
+                    f.write(f"  Note: ABNORMAL termination can occur with strict convergence settings\n")
+                    f.write(f"        or when the initial guess is very close to the optimum.\n")
+                f.write(f"  Success: {phase1_result.get('success', False)}\n")
+            else:
+                f.write(f"  Status: Interrupted or incomplete\n")
+            f.write(f"\n")
+
         self.logger.info("")
         self.logger.info("=" * 60)
         self.logger.info("Phase 2: Fitting soft constraints (lambda_sc) with fixed physical params")
         self.logger.info("=" * 60)
+
+        # Write to summary log
+        with open(self.summary_log_path, 'a') as f:
+            f.write(f"{'='*60}\n")
+            f.write(f"Phase 2: Fitting soft constraints (lambda_sc)\n")
+            f.write(f"{'='*60}\n\n")
         
         # Phase 2: Enable lambda_sc and reinitialize structures
         self.infer_1D_sc = True
         self._reinitialize_for_phase2()
-        
+
+        # Mark that we're in phase 2 for callback handling
+        self.current_phase = 2
+
         # Fix physical params, optimize lambda_sc
         self.fix_physical_params = True
         self.fix_lambda_sc = False
-        
+
         # Reset iteration count for phase 2
         self.iteration_count = 0
         
@@ -1659,7 +1970,7 @@ class MultiSystemsFit:
         plt.ylabel('Loss/(N_seq*N_exps)')
         plt.yscale('log')
         plt.legend()
-        plt.savefig(os.path.join(self.output_dir, 'loss_history.png'), bbox_inches='tight')
+        plt.savefig(os.path.join(self.output_paths['plots'], 'loss_history.png'), bbox_inches='tight')
         if plt.isinteractive():
             plt.show()
         else:
@@ -1684,13 +1995,52 @@ class MultiSystemsFit:
             ax.grid()
             ax.set_xlim(0, None)
         plt.tight_layout()
-        plt.savefig(os.path.join(self.output_dir, 'params_history.png'), bbox_inches='tight')
+        plt.savefig(os.path.join(self.output_paths['plots'], 'params_history.png'), bbox_inches='tight')
         if plt.isinteractive():
             plt.show()
         else:
             plt.close()
 
-    
+    def print_params_summary(self, params_1d, save_to_file=True):
+        """Generate human-readable parameter summary."""
+        import datetime
+        params_dict = self.pack_params(params_1d, self.systems[0])
+
+        lines = [
+            "=" * 50,
+            "MERGE-RNA Fitted Parameters",
+            f"Date: {datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')}",
+            f"System(s): {', '.join(s.sys_name for s in self.systems)}",
+            "=" * 50,
+            "",
+            "--- Physical Parameters ---",
+            f"mu_r    = {params_dict['mu_r']:8.4f}  # Chemical potential (kcal/mol)",
+            f"p_b     = {params_dict['p_b']:8.4f}  # Penalty for paired bases (kcal/mol)",
+            f"m0      = {params_dict['m0']:8.6f}  # Governs false positive mutations",
+            f"m1      = {params_dict['m1']:8.4f}  # Governs false negative mutations",
+            "",
+            "--- Binding Probabilities (p_bind) ---",
+            "         Unpaired    Paired",
+        ]
+
+        for nt in ['A', 'C', 'G', 'U']:
+            unpaired = params_dict['p_bind'].get((0, nt), 0)
+            paired = params_dict['p_bind'].get((1, nt), 0)
+            lines.append(f"  {nt}      {unpaired:8.4f}    {paired:8.4f}")
+
+        lines.append("")
+        lines.append("[End of parameters summary]")
+
+        summary = "\n".join(lines)
+
+        if save_to_file:
+            path = os.path.join(self.output_paths['detailed'], 'physical_params.txt')
+            with open(path, 'w') as f:
+                f.write(summary)
+
+        return summary
+
+
     def save_results(self):
         params_final_1D = self.fit_result.x if hasattr(self, 'fit_result') else self.params_last_callback
         self.callback(params_final_1D, last_callback=True)
@@ -1703,16 +2053,30 @@ class MultiSystemsFit:
             self.logger.info("24 hours elapsed; saving results before stopping optimization.")
             self.save_results()
             raise KeyboardInterrupt("Stopping optimization after 24 hours.")
-        # Log losses to log file (info for first/last, debug otherwise)
+
+        # Calculate total loss
+        total_loss = sum(self.losses_exp_fit.values())
+
+        # Log losses to detailed log file (info for first/last, debug otherwise)
         if self.iteration_count <= 1 or last_callback:
             self.logger.info(f'Callback n.{self.iteration_count} at {datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")} with losses: {self.losses_exp_fit}')
         else:
             self.logger.debug(f'Callback n.{self.iteration_count} at {datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")} with losses: {self.losses_exp_fit}')
         self.logger.debug(f'params: {list(params)}')
+
+        # Log to summary log (sampled: every 10 iterations, or first/last)
+        if self.iteration_count == 1 or self.iteration_count % 10 == 0 or last_callback:
+            with open(self.summary_log_path, 'a') as f:
+                f.write(f"Iteration {self.iteration_count:5d}: Total loss = {total_loss:.6f}\n")
+
         # Print self-updating iteration counter to stdout (overwrite same line)
         if self.print_to_std_out and not last_callback:
             print(f'\rIteration: {self.iteration_count}', end='', flush=True)
         np.savetxt(os.path.join(self.output_dir, 'params1D.txt'), params)
+        # Save human-readable summary on first and last callback
+        if self.iteration_count <= 1 or last_callback:
+            summary = self.print_params_summary(params, save_to_file=True)
+            self.logger.info(f"\n{summary}")
         if not last_callback:
             # update params
             self.params_last_callback = params
@@ -1738,7 +2102,7 @@ class MultiSystemsFit:
                 for system in self.systems:
                     system_param = self.pack_params(params, system)
                     # plot mut profile
-                    system.plot_mut_profiles(**system_param, save_fig_path=os.path.join(self.output_dir, f'{system.sys_name}_mut_profile.png'))
+                    system.plot_mut_profiles(**system_param, save_fig_path=os.path.join(self.output_paths['plots'], f'{system.sys_name}_mut_profile.png'))
                     if plt.isinteractive():
                         plt.show()
                     else:
@@ -1746,19 +2110,40 @@ class MultiSystemsFit:
                     # plot lambdas
                     # if there are training experiments in the system
                     if system.exp_fits_train:
-                        system.plot_lambdas(system_param['lambda_sc'], save_fig_path=os.path.join(self.output_dir, f'{system.sys_name}_lambda_sc.png'))
+                        system.plot_lambdas(system_param['lambda_sc'], save_fig_path=os.path.join(self.output_paths['plots'], f'{system.sys_name}_lambda_sc.png'))
                     # plot pairing probs
                     if last_callback or self.infer_1D_sc:
-                        system.plot_pairing_probs(**system_param, save_fig_path=os.path.join(self.output_dir, f'{system.sys_name}_pairing_probs.png'))
+                        system.plot_pairing_probs(**system_param, save_fig_path=os.path.join(self.output_paths['plots'], f'{system.sys_name}_pairing_probs.png'))
                         if plt.isinteractive():
                             plt.show()
                         else:
                             plt.close()
-                        system.plot_averages_vs_conc(system_param, save_fig_path=os.path.join(self.output_dir, f'{system.sys_name}_avg_vs_conc.png'))
+                        system.plot_averages_vs_conc(system_param, save_fig_path=os.path.join(self.output_paths['plots'], f'{system.sys_name}_avg_vs_conc.png'))
                         if plt.isinteractive():
                             plt.show()
                         else:
                             plt.close()
+                        # Generate comparative arcplot and save pairing probabilities on last callback
+                        if last_callback and self.infer_1D_sc:
+                            system.generate_comparative_arcplot(
+                                mu_r=system_param['mu_r'],
+                                p_b=system_param['p_b'],
+                                lambda_sc=system_param['lambda_sc'],
+                                save_path=os.path.join(self.output_paths['plots'], f'{system.sys_name}_comparative_arcplot.png')
+                            )
+                        # Save pairing probabilities on last callback
+                        if last_callback:
+                            system.save_pairing_probabilities(
+                                mu_r=system_param['mu_r'],
+                                p_b=system_param['p_b'],
+                                lambda_sc=system_param.get('lambda_sc'),
+                                output_dir=self.output_paths['detailed']
+                            )
+                            # Save lambda_sc on last callback
+                            system.save_lambda_sc(
+                                lambda_sc=system_param.get('lambda_sc'),
+                                output_dir=self.output_paths['detailed']
+                            )
                 # Log plots saved: info level for first/last callback, debug otherwise
                 if self.iteration_count <= 1 or last_callback:
                     self.logger.info(f'Plots saved')
@@ -1770,7 +2155,57 @@ class MultiSystemsFit:
                 # update last callback time
                 self.last_plot_callback_time = datetime.datetime.now()
 
-    
+        # Write final summary to summary log on last callback
+        if last_callback:
+            params_dict = self.pack_params(params, self.systems[0])
+            with open(self.summary_log_path, 'a') as f:
+                # If we're in phase 1 or phase 2 of sequential mode, handle specially
+                if self.current_phase == 1:
+                    # Phase 1: Don't write here, sequential fit will write full params with p_bind
+                    pass
+                elif self.current_phase == 2:
+                    # Phase 2: just note that lambdas are saved
+                    f.write(f"\nFitted soft constraints (lambda_sc) saved to:\n")
+                    for system in self.systems:
+                        f.write(f"  {self.output_paths['detailed']}/{system.sys_name}_lambda_sc.txt\n")
+                    f.write(f"\nConvergence:\n")
+                    if hasattr(self, 'fit_result') and self.fit_result is not None:
+                        status_msg = self.fit_result.get('message', 'N/A')
+                        f.write(f"  Status: {status_msg}\n")
+                        # Explain ABNORMAL termination
+                        if 'ABNORMAL' in str(status_msg).upper():
+                            f.write(f"  Note: ABNORMAL termination can occur due to numerical errors when the loss is close to the minimum\n")
+                        f.write(f"  Success: {self.fit_result.get('success', False)}\n")
+                    else:
+                        f.write(f"  Status: Interrupted or incomplete\n")
+                    f.write(f"  Total iterations: {self.iteration_count}\n")
+                    f.write(f"  Final total loss: {total_loss:.6f}\n")
+                    f.write(f"{'='*60}\n")
+                else:
+                    # Not in sequential mode (current_phase is None)
+                    # Print full final parameters
+                    f.write(f"\n{'='*60}\n")
+                    f.write(f"Final Parameters:\n")
+                    f.write(f"  mu_r = {params_dict['mu_r']:.4f}\n")
+                    f.write(f"  p_b  = {params_dict['p_b']:.4f}\n")
+                    f.write(f"  m0   = {params_dict['m0']:.6f}\n")
+                    f.write(f"  m1   = {params_dict['m1']:.4f}\n")
+                    f.write(f"\nConvergence:\n")
+                    if hasattr(self, 'fit_result') and self.fit_result is not None:
+                        status_msg = self.fit_result.get('message', 'N/A')
+                        f.write(f"  Status: {status_msg}\n")
+                        # Explain ABNORMAL termination
+                        if 'ABNORMAL' in str(status_msg).upper():
+                            f.write(f"  Note: ABNORMAL termination can occur with strict convergence settings\n")
+                            f.write(f"        or when the initial guess is very close to the optimum.\n")
+                        f.write(f"  Success: {self.fit_result.get('success', False)}\n")
+                    else:
+                        f.write(f"  Status: Interrupted or incomplete\n")
+                    f.write(f"  Total iterations: {self.iteration_count}\n")
+                    f.write(f"  Final total loss: {total_loss:.6f}\n")
+                    f.write(f"{'='*60}\n")
+
+
 #reload library
 #importlib.reload(class_experiment)
 #%%
