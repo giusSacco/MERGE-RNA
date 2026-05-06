@@ -1,0 +1,81 @@
+# Minimal .gitignore for private-analysis branch
+# Track everything except junk/cache, heavy folders, and generated outputs
+
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+
+# macOS
+.DS_Store
+
+# Jupyter checkpoints
+.ipynb_checkpoints/
+
+# IDE
+.vscode/
+.idea/
+
+# Python environments (local)
+.env
+.venv/
+env/
+venv/
+
+# Temporary files
+*.tmp
+*.swp
+*~
+.tmp.driveupload/
+
+# Heavy folders (too large for git)
+data_validation_draco/
+RedmondData/
+Newseq/
+cache/
+
+# Allow committed cache data (notebook reproducibility)
+!data/cache/
+!data/cache/**
+#other/
+otherfigs/
+outputs/
+overleaf/
+#initial_guesses_for_newseqWT/
+
+# Fit outputs (regenerable, often large)
+fits/
+
+# Archived fits (kept for reference but excluded from new commits)
+fits/_archive/
+fits/test
+*/_archive/maintext_figs.ipynb
+
+# Generated figures and PDFs (regenerable from scripts)
+*.png
+*.pdf
+*.html
+
+# Allow schematic PNG committed alongside fit params (must come after *.png rule)
+!fits_paper/designed_sequence/synthetic/schematic_result.png
+
+# Adenine riboswitch fit runtime outputs (phase1/phase2 written by run_fit.py)
+fits_paper/adenine_riboswitch/phase1/
+fits_paper/adenine_riboswitch/phase2/
+
+# Working notebooks (heavy diffs, not for sharing)
+analysis_pipeline.ipynb
+maintext_figs.ipynb
+OlsonData/**/*.ipynb
+
+# Local planning notes
+TODO.md
+
+# Scratch / junk
+scratch/
+
+# Workstation re-fit verification outputs (local only, not for git)
+data/cache_verify/
+scripts/verify_workstation.sh
+

@@ -1,0 +1,12 @@
+### Chemical probing experiment
+ID:	783b507a-da53-4cf5-9902-3e87d328e586
+Description:	NewseqWT conc 20mM rep 1
+Short description:	WT 20mM r1
+Path to rc data:	$RNA_STRUCT_HOME/data/designed_sequence/experimental/20mM_r1/058_D_20mM_GiuseppeWT_1_sorted.rc
+Reagent:	DMS
+Concentration:	20
+SRR:	058_D_20mM_GiuseppeWT_1
+Path to full reference fasta:	/Users/giuseppesacco/uni/MERGE-RNA/Newseq/reference.fa
+Temperature:	37
+system:	NewseqWT
+Rep number:	1

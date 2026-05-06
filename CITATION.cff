@@ -1,0 +1,48 @@
+cff-version: 1.2.0
+message: "If you use this software, please cite the accompanying paper."
+title: "MERGE-RNA"
+version: 0.2.0
+date-released: "2026-05-06"
+url: "https://github.com/giusSacco/MERGE-RNA"
+license: MIT
+authors:
+  - family-names: Sacco
+    given-names: Giuseppe
+    orcid: "https://orcid.org/0009-0001-0594-8349"
+    affiliation: "Scuola Internazionale Superiore di Studi Avanzati, Trieste, Italy"
+  - family-names: Li
+    given-names: Jianhui
+    affiliation: "Architecture et Réactivité de l'ARN, Université de Strasbourg, CNRS, IBMC, Strasbourg, France"
+  - family-names: Smyth
+    given-names: Redmond P.
+    orcid: "https://orcid.org/0000-0002-1580-0671"
+    affiliation: "Architecture et Réactivité de l'ARN, Université de Strasbourg, CNRS, IBMC, Strasbourg, France"
+  - family-names: Sanguinetti
+    given-names: Guido
+    orcid: "https://orcid.org/0000-0002-6663-8336"
+    affiliation: "Scuola Internazionale Superiore di Studi Avanzati, Trieste, Italy"
+  - family-names: Bussi
+    given-names: Giovanni
+    orcid: "https://orcid.org/0000-0001-9216-5782"
+    affiliation: "Scuola Internazionale Superiore di Studi Avanzati, Trieste, Italy"
+preferred-citation:
+  type: article
+  title: "MERGE-RNA: a physics-based model to predict RNA secondary structure ensembles with chemical probing"
+  authors:
+    - family-names: Sacco
+      given-names: Giuseppe
+      orcid: "https://orcid.org/0009-0001-0594-8349"
+    - family-names: Li
+      given-names: Jianhui
+    - family-names: Smyth
+      given-names: Redmond P.
+      orcid: "https://orcid.org/0000-0002-1580-0671"
+    - family-names: Sanguinetti
+      given-names: Guido
+      orcid: "https://orcid.org/0000-0002-6663-8336"
+    - family-names: Bussi
+      given-names: Giovanni
+      orcid: "https://orcid.org/0000-0001-9216-5782"
+  year: 2025
+  url: "https://arxiv.org/abs/2512.20581"
+  doi: "10.48550/arXiv.2512.20581"

@@ -1,0 +1,12 @@
+### Chemical probing experiment
+ID:	9901315f-cc0e-4495-ac29-7c90f73df70f
+Description:	bact_RNaseP_typeA 0mM r2
+Short description:	bact_RNaseP_typeA 0mM r2
+Path to rc data:        $RNA_STRUCT_HOME/data/structured_rnas/bact_RNaseP_typeA/Rep2_0mM/LAST_MD_sorted.rc
+Reagent:	DMS
+Concentration:	0
+SRR:	None
+Path to full reference fasta:	None
+Temperature:	37
+system:	bact_RNaseP_typeA
+Rep number:	2

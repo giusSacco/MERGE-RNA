@@ -1,0 +1,12 @@
+### Chemical probing experiment
+ID:	a22f6f5d-d1e3-4744-9c65-2a16f1ffd633
+Description:	WT ETOH control rep 1
+Short description:	WT ETOH r1
+Path to rc data:	$RNA_STRUCT_HOME/data/adenine_riboswitch/SRR15560865/SRR15560865_1_sorted.rc
+Reagent:	DMS
+Concentration:	0
+SRR:	SRR15560865
+Path to full reference fasta:	$RNA_STRUCT_HOME/data/adenine_riboswitch/reference.fa
+Temperature:	30
+system:	add_riboswitch_WT
+Rep number:	1

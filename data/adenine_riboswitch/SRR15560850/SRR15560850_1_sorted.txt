@@ -1,0 +1,12 @@
+### Chemical probing experiment
+ID:	fbbd67d7-f44b-4304-bbf9-18d28006e4d1
+Description:	WT adenine 500 uM rep 1
+Short description:	WT ade=500 r1
+Path to rc data:	$RNA_STRUCT_HOME/data/adenine_riboswitch/SRR15560850/SRR15560850_1_sorted.rc
+Reagent:	DMS
+Concentration:	170
+SRR:	SRR15560850
+Path to full reference fasta:	$RNA_STRUCT_HOME/data/adenine_riboswitch/reference.fa
+Temperature:	30
+system:	add_riboswitch_WT
+Rep number:	1
