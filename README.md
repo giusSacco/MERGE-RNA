@@ -1,5 +1,7 @@
 # MERGE-RNA
 
+[![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.20059549.svg)](https://doi.org/10.5281/zenodo.20059549)
+
 **M**ulti-system **E**nsemble **R**efinement via **G**eneralizable parameters **E**stimation
 
 [MERGE-RNA (Sacco et al., 2025)](https://arxiv.org/abs/2512.20581) predicts the RNA secondary structure ensemble that best explains chemical probing data across a joint analysis of data from multiple sequences, replicates, and probe concentrations in a single unified fit.
@@ -100,27 +102,14 @@ or directly edit the `.ipynb` file in Jupyter and run all cells.
 - **merge_rna/experiment.py** – `Experiment` class for loading data, attaching experiment metadata, and synthetic dataset helpers.
 - **merge_rna/fit.py** – `ExperimentFit`, `System`, and `MultiSystemsFit` classes for mutation-rate prediction, gradients, soft-constraint handling, and optimisation orchestration.
 
-## Citation
+## Reference
 
-If you use MERGE-RNA, please cite the paper:
+If you use MERGE-RNA, please cite:
 
 > G. Sacco, J. Li, R.P. Smyth, G. Sanguinetti, G. Bussi.  
 > **MERGE-RNA: a physics-based model to predict RNA secondary structure ensembles with chemical probing**  
-> arXiv:2512.20581, 2025.  
+> arXiv preprint arXiv:2512.20581, 2025.  
 > [https://arxiv.org/abs/2512.20581](https://arxiv.org/abs/2512.20581)
-
-```bibtex
-@article{sacco2025mergeRNA,
-  title   = {{MERGE-RNA}: a physics-based model to predict {RNA} secondary structure ensembles with chemical probing},
-  author  = {Sacco, Giuseppe and Li, Jianhui and Smyth, Redmond P. and Sanguinetti, Guido and Bussi, Giovanni},
-  journal = {arXiv preprint arXiv:2512.20581},
-  year    = {2025},
-  url     = {https://arxiv.org/abs/2512.20581},
-  doi     = {10.48550/arXiv.2512.20581}
-}
-```
-
-A `CITATION.cff` file is also provided for use with GitHub's *Cite this repository* button.
 
 ## License
 

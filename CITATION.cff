@@ -4,6 +4,7 @@ title: "MERGE-RNA"
 version: 0.2.0
 date-released: "2026-05-06"
 url: "https://github.com/giusSacco/MERGE-RNA"
+doi: "10.5281/zenodo.20059549"
 license: MIT
 authors:
   - family-names: Sacco
